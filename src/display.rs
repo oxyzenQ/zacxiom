@@ -399,7 +399,7 @@ pub fn render_insights(ctx: &InsightContext) -> String {
     }
 
     for r in &rows {
-        out.push_str(&format!("{V}   {:<73} {V}\n", r));
+        out.push_str(&format!("{V}   {:<72} {V}\n", r));
     }
 
     out.push_str(&bot());

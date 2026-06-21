@@ -11,7 +11,7 @@ if ! command -v cargo &>/dev/null; then
   . "$HOME/.cargo/env" 2>/dev/null || true
 fi
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 echo -e "${YELLOW}━━━ ZACXIOM CHECK-ALL ━━━${NC}"
 

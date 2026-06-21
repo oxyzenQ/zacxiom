@@ -47,7 +47,7 @@ The zacxiom model is **Observe → Understand → Decide → Act**. Never skip d
 
 ```bash
 # Build
-./build.sh check-all
+./scripts/build.sh check-all
 
 # Scan — analytical view: what exists, what is safe
 zacxiom scan
@@ -82,9 +82,9 @@ zacxiom status
 | **Context Memory** | Adaptive thresholds per system — learns what you trust |
 | **Safety Lock** | H1–H6 hard rules enforced at runtime — no bypass |
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for module structure and data flow.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module structure and data flow.
 
-See [RULES.md](RULES.md) for the complete hardened safety specification.
+See [docs/RULES.md](docs/RULES.md) for the complete hardened safety specification.
 
 ## Safety Guarantees
 

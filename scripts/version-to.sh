@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # version-to.sh — Advanced single-source version bumping for zacxiom
-# Usage: ./version-to.sh vX.Y.Z [--dry-run]
+# Usage: ./scripts/version-to.sh vX.Y.Z [--dry-run]
 set -euo pipefail
+
+cd "$(dirname "$0")/.."
 
 DRY_RUN=false
 if [[ "${1:-}" == "--dry-run" ]]; then
