@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# install.sh — Build and install zacxiom system-wide
-# Usage: ./scripts/install.sh [--prefix /usr/local]
+# Copyright (C) 2026 rezky_nightky
+# SPDX-License-Identifier: GPL-3.0-only
+
+# install.sh - Build and install zacxiom for the current user.
+# Usage: ./scripts/install.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PREFIX="${PREFIX:-/usr/local}"
+PREFIX="${PREFIX:-$HOME/.local}"
 BIN_DIR="${PREFIX}/bin"
 
 RED='\033[0;31m'
@@ -32,15 +35,10 @@ cargo build --release --locked
 echo -e "  ${GREEN}✓${NC} Build complete"
 echo ""
 
-# Install binary (build as user, install with sudo if needed)
+# Install binary without privilege escalation.
 echo "Installing to ${BIN_DIR}..."
-if [ -w "$BIN_DIR" ] || [ -w "$(dirname "$BIN_DIR")" ]; then
-  mkdir -p "$BIN_DIR"
-  install -m 755 target/release/zacxiom "$BIN_DIR/zacxiom"
-else
-  sudo mkdir -p "$BIN_DIR"
-  sudo install -m 755 target/release/zacxiom "$BIN_DIR/zacxiom"
-fi
+mkdir -p "$BIN_DIR"
+install -m 755 target/release/zacxiom "$BIN_DIR/zacxiom"
 echo -e "  ${GREEN}✓${NC} Installed: ${BIN_DIR}/zacxiom"
 echo ""
 

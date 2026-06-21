@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# uninstall.sh — Remove zacxiom from the system
-# Usage: ./scripts/uninstall.sh [--prefix /usr/local]
+# Copyright (C) 2026 rezky_nightky
+# SPDX-License-Identifier: GPL-3.0-only
+
+# uninstall.sh - Remove zacxiom for the current user.
+# Usage: ./scripts/uninstall.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PREFIX="${PREFIX:-/usr/local}"
+PREFIX="${PREFIX:-$HOME/.local}"
 BIN_DIR="${PREFIX}/bin"
 
 RED='\033[0;31m'
@@ -19,11 +22,7 @@ echo ""
 
 # Remove binary
 if [ -f "$BIN_DIR/zacxiom" ]; then
-  if [ -w "$BIN_DIR/zacxiom" ]; then
-    rm -f "$BIN_DIR/zacxiom"
-  else
-    sudo rm -f "$BIN_DIR/zacxiom"
-  fi
+  rm -f "$BIN_DIR/zacxiom"
   echo -e "  ${GREEN}✓${NC} Removed: ${BIN_DIR}/zacxiom"
 else
   echo -e "  ${YELLOW}⚠${NC} Binary not found: ${BIN_DIR}/zacxiom"

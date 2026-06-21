@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 rezky_nightky
+# SPDX-License-Identifier: GPL-3.0-only
+
 # version-to.sh — Advanced single-source version bumping for zacxiom
 # Usage: ./scripts/version-to.sh vX.Y.Z [--dry-run]
 set -euo pipefail
@@ -71,7 +74,7 @@ echo ""
 echo "Version bumped: ${CUR_TAG} → ${NEW_TAG}"
 echo ""
 echo "Next steps:"
-echo "  ./build.sh check-all"
+echo "  ./scripts/build.sh check-all"
 echo "  git add -A && git commit -m 'chore: bump to ${NEW_TAG}'"
 echo "  git tag ${NEW_TAG}"
 echo "  git push origin main --tags"

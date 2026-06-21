@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 rezky_nightky
+# SPDX-License-Identifier: GPL-3.0-only
+
 set -euo pipefail
+
+case "${1:---check-all}" in
+  --check-all|check-all) ;;
+  *)
+    echo "Usage: ./scripts/build.sh --check-all" >&2
+    exit 2
+    ;;
+esac
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -31,10 +42,16 @@ check_step() {
 FAILED=0
 
 check_step "fmt       " cargo fmt --all -- --check || FAILED=1
-check_step "clippy    " cargo clippy -- -D warnings || FAILED=1
+check_step "clippy    " cargo clippy --all-targets --all-features -- -D warnings || FAILED=1
 check_step "build     " cargo build || FAILED=1
 check_step "test      " cargo test || FAILED=1
-check_step "audit     " cargo audit 2>/dev/null || true  # non-fatal if not installed
+if command -v cargo-deny >/dev/null 2>&1; then
+  check_step "deny      " cargo deny check || FAILED=1
+elif cargo audit --version >/dev/null 2>&1; then
+  check_step "audit     " cargo audit || FAILED=1
+else
+  echo -e "  audit      ... ${YELLOW}SKIP${NC} (install cargo-deny or cargo-audit)"
+fi
 
 echo ""
 if [ "$FAILED" -eq 0 ]; then

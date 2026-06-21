@@ -1,6 +1,7 @@
+---
 name: Release
 
-on:
+"on":
   push:
     tags:
       - 'v[0-9]+.*'
@@ -44,13 +45,11 @@ jobs:
         run: |
           ARCHIVE="zacxiom-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/zacxiom dist/
+          cp "target/${{ matrix.target }}/release/zacxiom" dist/
           cp README.md LICENSE docs/trademark.md dist/
-          cd dist
-          tar czf ../"$ARCHIVE" *
-          cd ..
+          tar czf "$ARCHIVE" -C dist .
           sha512sum "$ARCHIVE" > "$ARCHIVE.sha512sum"
-          echo "archive=$ARCHIVE" >> $GITHUB_ENV
+          echo "archive=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload release
         uses: softprops/action-gh-release@v2

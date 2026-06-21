@@ -172,7 +172,7 @@ cargo audit                  # Dependency vulnerabilities (when available)
 > ```
 
 ### E4 — Gatekeeper Script
-> `./build.sh check-all` MUST pass before every commit.
+> `./scripts/build.sh check-all` MUST pass before every commit.
 > Sequence: fmt → clippy → build → test → audit.
 > Exit immediately on any hard failure.
 
