@@ -1,3 +1,6 @@
+// Copyright (C) 2026 rezky_nightky
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Dry-run simulator — mandatory before any clean operation.
 //!
 //! Produces explainable output showing exactly what WOULD happen

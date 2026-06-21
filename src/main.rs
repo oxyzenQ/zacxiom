@@ -1,3 +1,6 @@
+// Copyright (C) 2026 rezky_nightky
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Zacxiom — Filesystem Intelligence Engine
 //!
 //! Observe → Understand → Decide → Act
@@ -17,10 +20,45 @@ use cli::{Cli, Command};
 use std::path::PathBuf;
 use std::process;
 
+const BUILD_TARGET: &str = {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        "linux-x86_64"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        "linux-aarch64"
+    }
+    #[cfg(not(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "aarch64")
+    )))]
+    {
+        "unknown"
+    }
+};
+
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
+    // Handle --version / -V before any command
+    if cli.version {
+        print_version();
+        return;
+    }
+
+    // Handle --check-update
+    if cli.check_update {
+        check_update();
+        return;
+    }
+
+    let command = cli.command.unwrap_or_else(|| {
+        eprintln!("No command specified. Use --help for usage.");
+        process::exit(1);
+    });
+
+    match command {
         Command::Scan {
             paths,
             depth,
@@ -39,7 +77,66 @@ fn main() {
             force,
             json,
         } => run_clean(paths, depth, smart, force, json),
+
+        Command::CheckUpdate => check_update(),
     }
+}
+
+/// Print version in masterclass format.
+fn print_version() {
+    let git_hash = option_env!("ZACXIOM_GIT_HASH").unwrap_or("unknown");
+    println!("zacxiom -V/--version");
+    println!("Version: v{}", env!("CARGO_PKG_VERSION"));
+    println!("Build: {} ({})", BUILD_TARGET, git_hash);
+    println!("Copyright: (c) 2026 rezky_nightky (oxyzenQ)");
+    println!("License: GPL-3.0");
+    println!("Source: https://github.com/oxyzenQ/zacxiom");
+}
+
+/// Check latest upstream release via GitHub API.
+fn check_update() {
+    println!("Checking for updates...");
+
+    let current = env!("CARGO_PKG_VERSION");
+    println!("Current: v{}", current);
+
+    match fetch_latest_release() {
+        Ok(latest) => {
+            if latest != current {
+                println!("Latest : v{}", latest);
+                println!(
+                    "Update available: https://github.com/oxyzenQ/zacxiom/releases/tag/v{}",
+                    latest
+                );
+            } else {
+                println!("zacxiom is up to date (v{}).", current);
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to check for updates: {}", e);
+        }
+    }
+}
+
+/// Fetch latest release tag from GitHub API.
+fn fetch_latest_release() -> Result<String, String> {
+    let url = "https://api.github.com/repos/oxyzenQ/zacxiom/releases/latest";
+    let response = ureq::get(url)
+        .header("User-Agent", "zacxiom-check-update")
+        .call()
+        .map_err(|e| format!("HTTP error: {e}"))?;
+
+    let body = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| format!("Read error: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Parse error: {e}"))?;
+
+    json["tag_name"]
+        .as_str()
+        .map(|s| s.trim_start_matches('v').to_string())
+        .ok_or_else(|| "No tag_name in response".to_string())
 }
 
 /// Resolve scan roots: use provided paths or defaults.
@@ -68,11 +165,9 @@ fn run_scan(paths: Vec<String>, depth: usize, min_size: u64, json: bool, verbose
     if json {
         println!("{}", serde_json::to_string_pretty(&classified).unwrap());
     } else if verbose {
-        // Report mode: full output
         let sim = simulator::simulate(&classified);
         println!("{}", simulator::format_report(&sim));
     } else {
-        // Scan mode: brief
         println!("Scanned {} files", classified.len());
         let total: u64 = classified.iter().map(|f| f.size).sum();
         println!("Total size: {}", simulator::human_size(total));

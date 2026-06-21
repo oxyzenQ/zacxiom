@@ -1,3 +1,6 @@
+// Copyright (C) 2026 rezky_nightky
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Cache domain classification.
 //!
 //! Maps file paths to known cache domains using pattern matching.

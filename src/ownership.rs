@@ -1,3 +1,6 @@
+// Copyright (C) 2026 rezky_nightky
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Ownership detection — package vs user vs system vs orphan.
 //!
 //! v1 uses dpkg -S for package lookup (Debian/Ubuntu).

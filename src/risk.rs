@@ -1,3 +1,6 @@
+// Copyright (C) 2026 rezky_nightky
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Rule-based risk scoring engine.
 //!
 //! Takes classified files and assigns risk scores (0.0–1.0) + decisions

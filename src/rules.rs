@@ -1,3 +1,6 @@
+// Copyright (C) 2026 rezky_nightky
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Immutable safety rules and core types for Zacxiom.
 //!
 //! These rules are NON-OVERRIDABLE. No plugin, no config, no flag can bypass them.

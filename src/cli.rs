@@ -1,6 +1,9 @@
+// Copyright (C) 2026 rezky_nightky
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! CLI definitions using clap derive.
 //!
-//! Commands: scan, report, simulate, clean
+//! Commands: scan, report, simulate, clean, check-update
 //! Flags: --smart, --force, --json, --depth, --min-size
 
 use clap::{Parser, Subcommand};
@@ -8,15 +11,24 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "zacxiom",
-    version = env!("CARGO_PKG_VERSION"),
+    version, // overridden by custom --version in main()
     about = "Filesystem Intelligence Engine — Observe → Understand → Decide → Act",
     long_about = "Safe-by-default filesystem cleanup with full explainability.\n\
                   Every decision is justified. Every action is logged.\n\
-                  Run `simulate` before `clean` — always."
+                  Run `simulate` before `clean` — always.",
+    disable_version_flag = true
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
+
+    /// Print version information
+    #[arg(short = 'V', long, global = true)]
+    pub version: bool,
+
+    /// Check for latest upstream release
+    #[arg(long, global = true)]
+    pub check_update: bool,
 }
 
 #[derive(Subcommand)]
@@ -92,4 +104,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+
+    /// Check for latest upstream release on GitHub
+    CheckUpdate,
 }

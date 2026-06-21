@@ -149,6 +149,47 @@ cargo audit                  # Dependency vulnerabilities (when available)
 
 ---
 
+## ⚙️ ENGINEERING RULES (Masterclass)
+
+### E1 — Core LOC Constraint
+> Core engine MUST remain under 1,000 lines of Rust code (`src/*.rs`).
+> Excludes `*.md`, `*.txt`, test fixtures, and build scripts.
+> If a single file exceeds 400 LOC, it MUST be decomposed.
+
+### E2 — `main.rs` Purity
+> `main.rs` MUST only contain bootstrap, wiring, and dispatch (target: <200 LOC).
+> Logic goes into domain modules: `scanner`, `cache`, `ownership`, `risk`, etc.
+
+### E3 — Version Output
+> `-V` / `--version` MUST follow the masterclass format:
+> ```
+> zacxiom -V/--version
+> Version: vX.Y.Z
+> Build: linux-x86_64 (git-hash)
+> Copyright: (c) 2026 rezky_nightky (oxyzenQ)
+> License: GPL-3.0
+> Source: https://github.com/oxyzenQ/zacxiom
+> ```
+
+### E4 — Gatekeeper Script
+> `./build.sh check-all` MUST pass before every commit.
+> Sequence: fmt → clippy → build → test → audit.
+> Exit immediately on any hard failure.
+
+### E5 — Version Bumping
+> `./version-to vX.Y.Z` is the single source of truth for version bumps.
+> No manual version edits allowed.
+
+### E6 — Release Profile
+> `[profile.release]` MUST optimize for stability and efficiency:
+> ```toml
+> opt-level = 3
+> debug = false
+> strip = true
+> lto = "thin"
+> codegen-units = 1
+> ```
+
 ## 🔮 RULES EVOLUTION (v2 → v5)
 
 | Version | New Rules |

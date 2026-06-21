@@ -34,6 +34,7 @@ check_step "fmt       " cargo fmt --all -- --check || FAILED=1
 check_step "clippy    " cargo clippy -- -D warnings || FAILED=1
 check_step "build     " cargo build || FAILED=1
 check_step "test      " cargo test || FAILED=1
+check_step "audit     " cargo audit 2>/dev/null || true  # non-fatal if not installed
 
 echo ""
 if [ "$FAILED" -eq 0 ]; then
