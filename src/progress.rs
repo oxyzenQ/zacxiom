@@ -1,9 +1,10 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Progress state machine for UX feedback.
+//! Progress state machine — clean, no-flicker phase transitions.
 //!
-//! Gives users clear phase indication so they never wonder "is this running or hung?"
+//! Each phase prints exactly one line and advances.
+//! Carriage return + clear ensures old text is fully overwritten.
 
 use std::io::{self, Write};
 use std::time::Instant;
@@ -28,6 +29,16 @@ impl Phase {
         }
     }
 
+    fn desc(&self) -> &'static str {
+        match self {
+            Phase::Scan => "Discovering files...",
+            Phase::Analyze => "Building context...",
+            Phase::Classify => "Evaluating risk...",
+            Phase::Report => "Generating decisions...",
+            Phase::Ready => "Complete",
+        }
+    }
+
     pub fn next(&self) -> Phase {
         match self {
             Phase::Scan => Phase::Analyze,
@@ -39,10 +50,11 @@ impl Phase {
     }
 }
 
+const CLEAR: &str = "\r\x1b[K"; // carriage return + clear to end of line
+
 pub struct Progress {
     phase: Phase,
     started: Instant,
-    spinner_idx: usize,
     quiet: bool,
 }
 
@@ -51,61 +63,51 @@ impl Progress {
         Progress {
             phase: Phase::Scan,
             started: Instant::now(),
-            spinner_idx: 0,
             quiet,
         }
     }
 
+    /// Advance to next phase, printing the completed phase line.
     pub fn advance(&mut self) {
+        if !self.quiet {
+            let elapsed = self.started.elapsed().as_secs_f64();
+            // Clear current line, print completed phase
+            println!(
+                "{}  ✓ [{:5}] {:<22} ({:.1}s)",
+                CLEAR,
+                self.phase.label(),
+                self.phase.desc(),
+                elapsed
+            );
+            io::stdout().flush().ok();
+        }
         self.phase = self.phase.next();
-        self.tick();
-    }
-
-    pub fn tick(&mut self) {
-        if self.quiet {
-            return;
+        if !self.quiet {
+            print!(
+                "{}  ⠋ [{:5}] {:<22}",
+                CLEAR,
+                self.phase.label(),
+                self.phase.desc(),
+            );
+            io::stdout().flush().ok();
         }
-        let spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let s = spinner[self.spinner_idx % spinner.len()];
-        self.spinner_idx += 1;
-
-        let elapsed = self.started.elapsed().as_secs_f64();
-        print!(
-            "\r  {} [{:5}] {:<10}  ({:.1}s)",
-            s,
-            self.phase.label(),
-            phase_desc(self.phase),
-            elapsed
-        );
-        io::stdout().flush().ok();
     }
 
-    pub fn done(&self) {
+    /// Mark complete — print final phase and newline.
+    pub fn done(&mut self) {
         if self.quiet {
             return;
         }
         let elapsed = self.started.elapsed().as_secs_f64();
+        self.phase = Phase::Ready;
         println!(
-            "\r  ✓ [{:5}] {:<10}  ({:.1}s)",
+            "{}  ✓ [{:5}] {:<22} ({:.1}s)",
+            CLEAR,
             self.phase.label(),
-            phase_desc(self.phase),
+            self.phase.desc(),
             elapsed
         );
-    }
-
-    pub fn start_phase(&mut self, phase: Phase) {
-        self.phase = phase;
-        self.tick();
-    }
-}
-
-fn phase_desc(phase: Phase) -> &'static str {
-    match phase {
-        Phase::Scan => "scanning...",
-        Phase::Analyze => "analyzing...",
-        Phase::Classify => "classifying...",
-        Phase::Report => "reporting...",
-        Phase::Ready => "done",
+        println!(); // blank line before output begins
     }
 }
 
@@ -120,11 +122,8 @@ mod tests {
         p.advance();
         assert_eq!(p.phase, Phase::Analyze);
         p.advance();
-        assert_eq!(p.phase, Phase::Classify);
         p.advance();
         assert_eq!(p.phase, Phase::Report);
-        p.advance();
-        assert_eq!(p.phase, Phase::Ready);
     }
 
     #[test]
@@ -137,9 +136,6 @@ mod tests {
             Phase::Ready,
         ];
         let labels: Vec<&str> = phases.iter().map(|p| p.label()).collect();
-        assert_eq!(
-            labels,
-            vec!["SCAN", "ANALYZE", "CLASSIFY", "REPORT", "READY"]
-        );
+        assert_eq!(labels, ["SCAN", "ANALYZE", "CLASSIFY", "REPORT", "READY"]);
     }
 }

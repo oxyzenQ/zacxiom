@@ -225,7 +225,6 @@ fn run_scan(
     profile: &str,
 ) {
     let mut prog = progress::Progress::new(json);
-    prog.start_phase(progress::Phase::Scan);
 
     let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
@@ -262,7 +261,6 @@ fn run_scan(
 
 fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
     let mut prog = progress::Progress::new(json);
-    prog.start_phase(progress::Phase::Scan);
 
     let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
