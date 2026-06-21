@@ -9,6 +9,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DRY_RUN=false
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  echo "Usage: ./scripts/version-to.sh [--dry-run] vX.Y.Z"
+  echo "Example: ./scripts/version-to.sh v5.3.1"
+  exit 0
+fi
+
 if [[ "${1:-}" == "--dry-run" ]]; then
   DRY_RUN=true
   shift
@@ -23,6 +29,12 @@ fi
 
 NEW="${1#v}"
 NEW_TAG="v${NEW}"
+
+if [[ ! "${NEW_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: version must match vMAJOR.MINOR.PATCH" >&2
+  exit 1
+fi
+
 CUR="$(grep -E '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
 CUR_TAG="v${CUR}"
 

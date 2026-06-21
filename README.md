@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/zacxiom-logo-master.png" alt="Zylaxion logo" width="260">
+  <img src="assets/zacxiom-logo-master.png" alt="zacxiom logo" width="260">
 </p>
 
 <h1 align="center">zacxiom</h1>
@@ -100,7 +100,7 @@ See [docs/RULES.md](docs/RULES.md) for the complete hardened safety specificatio
 ## Version
 
 ```text
-zacxiom v5.3.0
+zacxiom v5.3.1
 Build: linux-x86_64
 Copyright: (c) 2026 rezky_nightky (oxyzenQ)
 License: GPL-3.0
