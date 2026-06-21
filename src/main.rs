@@ -5,18 +5,20 @@
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.
-//! v4: Safety autonomy — snapshots, undo, policy engine.
+//! v5: Final — context memory, safety lock, production ready.
 
 mod cache;
 mod cleaner;
 mod cli;
 mod history;
+mod memory;
 mod ownership;
 mod policy;
 mod procfs;
 mod profiles;
 mod risk;
 mod rules;
+mod safety;
 mod scanner;
 mod simulator;
 mod snapshot;
@@ -49,6 +51,7 @@ struct RunContext {
     history_cleaned: HashSet<String>,
     health: profiles::HealthMode,
     profile: profiles::Profile,
+    memory: memory::ContextMemory,
 }
 
 impl RunContext {
@@ -61,6 +64,7 @@ impl RunContext {
             },
             health: profiles::detect_health(),
             profile: profiles::Profile::from_str(profile_arg),
+            memory: memory::ContextMemory::load(),
         }
     }
 }
@@ -173,14 +177,25 @@ fn classify(entries: Vec<scanner::ScanEntry>, ctx: &RunContext) -> Vec<rules::Cl
         .map(|e| {
             let d = cache::classify(&e.path);
             let o = ownership::detect(&e.path);
-            risk::score_v2(
-                &e.path.to_string_lossy(),
+            let path_str = e.path.to_string_lossy().to_string();
+            let mut scored = risk::score_v2(
+                &path_str,
                 e.size,
                 d,
                 o,
                 Some(&ctx.open_files),
                 Some(&ctx.history_cleaned),
-            )
+            );
+            // v5: Apply adaptive memory modifier
+            let modif = ctx.memory.risk_modifier(&path_str);
+            scored.risk_score = (scored.risk_score + modif).clamp(0.0, 1.0);
+            if modif != 0.0 {
+                scored.risk_reasons.push(format!(
+                    "memory: adaptive modifier {modif:+.3} (sessions: {})",
+                    ctx.memory.sessions
+                ));
+            }
+            scored
         })
         .collect()
 }
@@ -256,6 +271,16 @@ fn run_clean(
     let sim = simulator::simulate(&classified, &ctx.health, &ctx.profile);
     println!("{}", simulator::format_report(&sim));
 
+    // v5: Safety lock validation
+    let check = safety::validate_clean(&classified, smart, force, true);
+    if !check.passed {
+        eprintln!("SAFETY LOCK: Clean blocked.");
+        for v in &check.violations {
+            eprintln!("  ❌ {v}");
+        }
+        std::process::exit(1);
+    }
+
     if force {
         use std::io::{self, Write};
         print!("\n⚠️  --force mode: Type YES to proceed: ");
@@ -270,6 +295,11 @@ fn run_clean(
 
     // v4: Snapshot before clean for undo support
     let mut snap = snapshot::Snapshot::new();
+    let cleaned_paths: Vec<String> = classified
+        .iter()
+        .filter(|f| f.decision.is_cleanable(smart, force))
+        .map(|f| f.path.clone())
+        .collect();
     for f in &classified {
         if f.decision.is_cleanable(smart, force) {
             snap.add(&f.path, f.size, None);
@@ -278,6 +308,10 @@ fn run_clean(
     let _ = snap.save();
 
     let report = cleaner::clean(&classified, smart, force);
+
+    // v5: Record to context memory
+    let mut mem = memory::ContextMemory::load();
+    mem.record_clean(&cleaned_paths);
 
     let mut hist = history::History::load();
     hist.add(history::CleanRecord {
@@ -351,6 +385,8 @@ fn run_status() {
     let hist = history::History::load();
     let snaps = snapshot::Snapshot::list_all();
     let policy = policy::Policy::load();
+    let mem = memory::ContextMemory::load();
+    let safe = safety::system_health_check();
 
     println!("═══════════════════════════════════");
     println!("  ZACXIOM STATUS");
@@ -358,6 +394,20 @@ fn run_status() {
     println!("  Health    : {:?}", health);
     println!("  History   : {} records", hist.records.len());
     println!("  Snapshots : {} available", snaps.len());
+    println!(
+        "  Memory    : {} sessions, {} trusted, {} flagged",
+        mem.sessions,
+        mem.trusted_paths.len(),
+        mem.flagged_paths.len()
+    );
+    println!(
+        "  Stability : {}",
+        if mem.is_stabilized() {
+            "stabilized"
+        } else {
+            "learning"
+        }
+    );
     if !policy.protected_paths.is_empty() {
         println!(
             "  Policy    : {} user-protected paths",
@@ -367,9 +417,12 @@ fn run_status() {
     if !snaps.is_empty() {
         println!("  Last snap : {}", snaps.last().unwrap());
     }
+    println!(
+        "  Safety    : {}",
+        if safe.passed { "PASS" } else { "FAIL" }
+    );
     println!("═══════════════════════════════════");
 }
-
 fn chrono_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
