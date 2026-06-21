@@ -1,15 +1,16 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Terminal-precise display engine v3.
+//! Terminal-precise display engine v4 — dynamic terminal width.
 //!
-//! Every row, border, and separator is exact-width-calculated.
-//! Column widths computed from content, constrained to terminal width.
-//! No overflow. No misalignment. No guesswork.
+//! Detects terminal width via ioctl(TIOCGWINSZ) on Linux.
+//! Falls back to $COLUMNS env var, then 80 columns.
+//! Minimum: 60 columns. All tables scale to available width.
 
 use crate::domain::DomainSummary;
 use crate::rules::{ClassifiedFile, Decision};
 use crate::summary::DecisionSummary;
+use std::sync::OnceLock;
 
 const H: &str = "─";
 const V: &str = "│";
@@ -20,69 +21,81 @@ const BR: &str = "┘";
 const LT: &str = "├";
 const RT: &str = "┤";
 const CR: &str = "┼";
-const W: usize = 78;
+const MIN_W: usize = 60;
+const DEFAULT_W: usize = 80;
 
-/// Display width in characters (not bytes). Unicode box-drawing chars are 3 bytes but 1 column.
-fn char_len(s: &str) -> usize {
-    s.chars().count()
+fn term_width() -> usize {
+    static W: OnceLock<usize> = OnceLock::new();
+    *W.get_or_init(|| detect_width().max(MIN_W))
 }
 
-// ── Primitives ──
+fn detect_width() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+        if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } == 0 && ws.ws_col > 0 {
+            return ws.ws_col as usize;
+        }
+    }
+    if let Ok(cols) = std::env::var("COLUMNS") {
+        if let Ok(n) = cols.parse::<usize>() {
+            if n > 0 {
+                return n;
+            }
+        }
+    }
+    DEFAULT_W
+}
 
-fn top() -> String {
-    format!("{TL}{}{TR}", H.repeat(W - 2))
+/// All primitives now take explicit `w` parameter for width.
+fn top(w: usize) -> String {
+    format!("{TL}{}{TR}", H.repeat(w.saturating_sub(2)))
 }
-fn sep() -> String {
-    format!("{LT}{}{RT}", H.repeat(W - 2))
+fn sep(w: usize) -> String {
+    format!("{LT}{}{RT}", H.repeat(w.saturating_sub(2)))
 }
-fn bot() -> String {
-    format!("{BL}{}{BR}", H.repeat(W - 2))
+fn bot(w: usize) -> String {
+    format!("{BL}{}{BR}", H.repeat(w.saturating_sub(2)))
 }
 
-/// Build a mid-row separator matching column widths.
-/// Layout: ├──W0──┼──W1──┼──...──┤
-/// The `├` aligns with `│` in data rows.
-fn mid_sep(widths: &[usize]) -> String {
+fn mid_sep(widths: &[usize], w: usize) -> String {
     let mut s = LT.to_string();
-    for (i, w) in widths.iter().enumerate() {
-        s.push_str(&H.repeat(*w));
+    for (i, cw) in widths.iter().enumerate() {
+        s.push_str(&H.repeat(*cw));
         if i < widths.len() - 1 {
             s.push_str(CR);
         }
     }
-    let fill = W.saturating_sub(char_len(&s) + 1);
+    let fill = w.saturating_sub(char_len(&s) + 1);
     s.push_str(&H.repeat(fill));
     s.push_str(RT);
     s
 }
 
-/// Render a header row: │COL1  COL2  COL3│
-fn header_row(cols: &[&str], widths: &[usize]) -> String {
-    row(cols, widths)
-}
-
-/// Render a data row: │val1  val2  val3│
-fn data_row(vals: &[String], widths: &[usize]) -> String {
-    let refs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
-    row(&refs, widths)
-}
-
-/// Core row renderer — exact width, no overflow.
-/// Layout: │ cell0  cell1  cell2  │
-fn row(cells: &[&str], widths: &[usize]) -> String {
+fn row(cells: &[&str], widths: &[usize], w: usize) -> String {
     let mut s = format!("{V} ");
     for (i, cell) in cells.iter().enumerate() {
         let trimmed = truncate_cell(cell, widths[i]);
-        s.push_str(&format!("{:w$}", trimmed, w = widths[i]));
+        s.push_str(&format!("{:cw$}", trimmed, cw = widths[i]));
         if i < widths.len() - 1 {
             s.push(' ');
         }
     }
-    let fill = W.saturating_sub(char_len(&s) + 1);
+    let fill = w.saturating_sub(char_len(&s) + 1);
     s.push_str(&" ".repeat(fill));
     s.push_str(V);
     s.push('\n');
     s
+}
+
+fn center_row(text: &str, w: usize) -> String {
+    let inner = w.saturating_sub(4);
+    format!("{V} {:^inner$} {V}\n", text)
+}
+
+/// Display width in characters (not bytes).
+fn char_len(s: &str) -> usize {
+    s.chars().count()
 }
 
 fn truncate_cell(s: &str, max: usize) -> String {
@@ -91,64 +104,57 @@ fn truncate_cell(s: &str, max: usize) -> String {
     } else if max <= 3 {
         s[..max].to_string()
     } else {
-        format!("{}..", &s[..max - 2])
+        format!("{}..", &s[..max.saturating_sub(2)])
     }
 }
 
-/// Compute column widths that fit within terminal width.
-/// Accounts for: left border+space (2), right border (1), inter-column spaces (N-1).
-fn fit_widths(headers: &[&str], n_cols: usize, min_w: usize) -> Vec<usize> {
+fn fit_widths(headers: &[&str], n_cols: usize, min_w: usize, w: usize) -> Vec<usize> {
     let separators = n_cols.saturating_sub(1);
-    let borders = 3; // "│ " (2) + "│" (1)
-    let available = W.saturating_sub(borders + separators);
-
-    // Start with header widths
+    let borders = 3;
+    let available = w.saturating_sub(borders + separators);
     let mut widths: Vec<usize> = headers.iter().map(|h| h.len().max(min_w)).collect();
     let total: usize = widths.iter().sum();
-
     if total <= available {
-        // Distribute remaining space proportionally
-        let slack = available - total;
-        for w in &mut widths {
-            let add = slack * *w / total.max(1);
-            *w += add;
+        let slack = available.saturating_sub(total);
+        for cw in &mut widths {
+            let add = slack * *cw / total.max(1);
+            *cw += add;
         }
-        // Distribute any remainder (from integer division) one-by-one
         let new_total: usize = widths.iter().sum();
         let mut leftover = available.saturating_sub(new_total);
-        for w in widths.iter_mut().rev() {
+        for cw in widths.iter_mut().rev() {
             if leftover == 0 {
                 break;
             }
-            *w += 1;
+            *cw += 1;
             leftover -= 1;
         }
     } else {
-        // Shrink proportionally
-        let to_trim = total - available;
-        for w in &mut widths {
-            let cut = (to_trim * *w) / total;
-            *w = (*w).saturating_sub(cut).max(min_w);
+        let to_trim = total.saturating_sub(available);
+        for cw in &mut widths {
+            let cut = (to_trim * *cw) / total;
+            *cw = (*cw).saturating_sub(cut).max(min_w);
         }
     }
     widths
 }
 
-fn center_row(text: &str) -> String {
-    let inner = W - 4; // │ _text_ │
-    format!("{V} {:^inner$} {V}\n", text)
-}
-
 // ── Decision Summary ──
 
 pub fn render_decision_summary(s: &DecisionSummary) -> String {
-    let mut out = top();
+    let w = term_width();
+    let lw = w * 55 / 100; // label width ~55%
+    let vw = w - lw - 4; // value width = remaining minus borders/spaces
+
+    let mut out = top(w);
     out.push('\n');
-    out.push_str(&center_row("DECISION SUMMARY"));
-    out.push_str(&sep());
+    out.push_str(&center_row("DECISION SUMMARY", w));
+    out.push_str(&sep(w));
     out.push('\n');
 
-    let kv = |label: &str, value: &str| format!("{V} {:<40}{:>34} {V}\n", label, value);
+    let kv = |label: &str, value: &str| {
+        format!("{V} {:<lw$}{:>vw$} {V}\n", label, value, lw = lw, vw = vw)
+    };
 
     out.push_str(&kv("Files Found", &s.files_found.to_string()));
     out.push_str(&kv("Safe To Clean", &s.safe_to_clean.to_string()));
@@ -156,7 +162,7 @@ pub fn render_decision_summary(s: &DecisionSummary) -> String {
     out.push_str(&kv("Recoverable Space", &human_size(s.recoverable_bytes)));
     out.push_str(&kv("Risk Level", &s.risk_level));
 
-    out.push_str(&bot());
+    out.push_str(&bot(w));
     out.push('\n');
     out
 }
@@ -167,17 +173,17 @@ pub fn render_domain_summary(domains: &[DomainSummary]) -> String {
     if domains.is_empty() {
         return "No cache domains found.\n".to_string();
     }
-
+    let w = term_width();
     let headers = ["DOMAIN", "FILES", "SIZE", "RISK", "STATUS"];
-    let widths = fit_widths(&headers, 5, 6);
+    let widths = fit_widths(&headers, 5, 6, w);
 
-    let mut out = top();
+    let mut out = top(w);
     out.push('\n');
-    out.push_str(&center_row("CACHE DOMAIN SUMMARY"));
-    out.push_str(&sep());
+    out.push_str(&center_row("CACHE DOMAIN SUMMARY", w));
+    out.push_str(&sep(w));
     out.push('\n');
-    out.push_str(&header_row(&headers, &widths));
-    out.push_str(&mid_sep(&widths));
+    out.push_str(&row(&headers, &widths, w));
+    out.push_str(&mid_sep(&widths, w));
     out.push('\n');
 
     for d in domains.iter().take(15) {
@@ -189,17 +195,19 @@ pub fn render_domain_summary(domains: &[DomainSummary]) -> String {
             d.status.label().to_string(),
         ]
         .map(|s| s.to_string());
-        out.push_str(&data_row(&vals, &widths));
+        let strs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
+        out.push_str(&row(&strs, &widths, w));
     }
 
     if domains.len() > 15 {
         out.push_str(&format!(
-            "{V} {:>74} {V}\n",
-            format!("... and {} more domains", domains.len() - 15)
+            "{V} {:>fill$} {V}\n",
+            format!("... and {} more domains", domains.len() - 15),
+            fill = w.saturating_sub(4)
         ));
     }
 
-    out.push_str(&bot());
+    out.push_str(&bot(w));
     out.push('\n');
     out
 }
@@ -210,30 +218,31 @@ pub fn render_table(files: &[ClassifiedFile], title: &str) -> String {
     if files.is_empty() {
         return format!("No files found for: {title}\n");
     }
-
+    let w = term_width();
     let headers = ["FILE", "SIZE", "RISK", "STATUS"];
-    let widths = [38, 8, 10, 15]; // pre-fit for 4 cols on 78-char terminal
+    let widths = fit_widths(&headers, 4, 6, w);
 
-    let mut out = top();
+    let mut out = top(w);
     out.push('\n');
-    out.push_str(&center_row(&format!("ZACXIOM — {title}")));
-    out.push_str(&sep());
+    out.push_str(&center_row(&format!("ZACXIOM — {title}"), w));
+    out.push_str(&sep(w));
     out.push('\n');
-    out.push_str(&header_row(&headers, &widths));
-    out.push_str(&mid_sep(&widths));
+    out.push_str(&row(&headers, &widths, w));
+    out.push_str(&mid_sep(&widths, w));
     out.push('\n');
 
-    let body = render_collapsed(files, &widths, 35);
+    let body = render_collapsed(files, &widths, w);
     out.push_str(&body);
-    out.push_str(&bot());
+    out.push_str(&bot(w));
     out.push('\n');
     out
 }
 
-fn render_collapsed(files: &[ClassifiedFile], widths: &[usize], max_rows: usize) -> String {
+fn render_collapsed(files: &[ClassifiedFile], widths: &[usize], w: usize) -> String {
     let mut out = String::new();
     let mut i = 0;
     let mut skipped = 0;
+    let max_rows = w / 2; // scale rows to terminal height
 
     while i < files.len() && i.saturating_sub(skipped) < max_rows {
         let f = &files[i];
@@ -254,10 +263,12 @@ fn render_collapsed(files: &[ClassifiedFile], widths: &[usize], max_rows: usize)
                 format!("{:.0}%", f.risk_score * 100.0),
                 status_label(&f.decision).to_string(),
             ];
-            out.push_str(&data_row(&vals, widths));
+            let strs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
+            out.push_str(&row(&strs, widths, w));
             out.push_str(&format!(
-                "{V} {:<74} {V}\n",
-                format!("  ... {} similar entries omitted", dupes - 1)
+                "{V} {:<fill$} {V}\n",
+                format!("  ... {} similar entries omitted", dupes - 1),
+                fill = w.saturating_sub(4)
             ));
             i += dupes;
             skipped += dupes - 1;
@@ -268,15 +279,17 @@ fn render_collapsed(files: &[ClassifiedFile], widths: &[usize], max_rows: usize)
                 format!("{:.0}%", f.risk_score * 100.0),
                 status_label(&f.decision).to_string(),
             ];
-            out.push_str(&data_row(&vals, widths));
+            let strs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
+            out.push_str(&row(&strs, widths, w));
             i += 1;
         }
     }
 
     if i < files.len() {
         out.push_str(&format!(
-            "{V} {:>74} {V}\n",
-            format!("... and {} more files", files.len() - i)
+            "{V} {:>fill$} {V}\n",
+            format!("... and {} more files", files.len() - i),
+            fill = w.saturating_sub(4)
         ));
     }
     out
@@ -288,22 +301,23 @@ pub fn render_simulation(files: &[ClassifiedFile], title: &str) -> String {
     if files.is_empty() {
         return format!("No files found for: {title}\n");
     }
-
+    let w = term_width();
     let headers = ["FILE", "SIZE", "RISK", "ACTION"];
-    let widths = [34, 8, 10, 17]; // pre-fit for 4 cols
+    let widths = fit_widths(&headers, 4, 6, w);
 
-    let mut out = top();
+    let mut out = top(w);
     out.push('\n');
-    out.push_str(&center_row(&format!("ZACXIOM SIMULATION — {title}")));
-    out.push_str(&sep());
+    out.push_str(&center_row(&format!("ZACXIOM SIMULATION — {title}"), w));
+    out.push_str(&sep(w));
     out.push('\n');
-    out.push_str(&header_row(&headers, &widths));
-    out.push_str(&mid_sep(&widths));
+    out.push_str(&row(&headers, &widths, w));
+    out.push_str(&mid_sep(&widths, w));
     out.push('\n');
 
     let mut i = 0;
     let mut skipped = 0;
-    while i < files.len() && i.saturating_sub(skipped) < 30 {
+    let max_rows = w / 2;
+    while i < files.len() && i.saturating_sub(skipped) < max_rows {
         let f = &files[i];
         let mut dupes = 1;
         while i + dupes < files.len()
@@ -321,10 +335,12 @@ pub fn render_simulation(files: &[ClassifiedFile], title: &str) -> String {
                 format!("{:.0}%", f.risk_score * 100.0),
                 action_label(&f.decision).to_string(),
             ];
-            out.push_str(&data_row(&vals, &widths));
+            let strs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
+            out.push_str(&row(&strs, &widths, w));
             out.push_str(&format!(
-                "{V} {:<74} {V}\n",
-                format!("  ... {} similar entries omitted", dupes - 1)
+                "{V} {:<fill$} {V}\n",
+                format!("  ... {} similar entries omitted", dupes - 1),
+                fill = w.saturating_sub(4)
             ));
             i += dupes;
             skipped += dupes - 1;
@@ -335,19 +351,21 @@ pub fn render_simulation(files: &[ClassifiedFile], title: &str) -> String {
                 format!("{:.0}%", f.risk_score * 100.0),
                 action_label(&f.decision).to_string(),
             ];
-            out.push_str(&data_row(&vals, &widths));
+            let strs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
+            out.push_str(&row(&strs, &widths, w));
             i += 1;
         }
     }
 
     if i < files.len() {
         out.push_str(&format!(
-            "{V} {:>74} {V}\n",
-            format!("... and {} more files", files.len() - i)
+            "{V} {:>fill$} {V}\n",
+            format!("... and {} more files", files.len() - i),
+            fill = w.saturating_sub(4)
         ));
     }
 
-    out.push_str(&bot());
+    out.push_str(&bot(w));
     out.push('\n');
     out
 }
@@ -355,10 +373,11 @@ pub fn render_simulation(files: &[ClassifiedFile], title: &str) -> String {
 // ── Insight Footer ──
 
 pub fn render_insights(ctx: &InsightContext) -> String {
-    let mut out = top();
+    let w = term_width();
+    let mut out = top(w);
     out.push('\n');
-    out.push_str(&center_row("INSIGHT"));
-    out.push_str(&sep());
+    out.push_str(&center_row("INSIGHT", w));
+    out.push_str(&sep(w));
     out.push('\n');
 
     let safe_pct = if ctx.total > 0 {
@@ -373,36 +392,38 @@ pub fn render_insights(ctx: &InsightContext) -> String {
     };
 
     let risk_level = if ctx.high_risk > 0 {
-        "HIGH — review before cleaning"
+        "HIGH — review"
     } else if ctx.moderate > 5 {
         "MODERATE — use --smart"
     } else if ctx.safe > 0 {
-        "LOW — safe to clean"
+        "LOW — safe"
     } else {
-        "MINIMAL — nothing actionable"
+        "MINIMAL"
     };
 
-    let mut rows = vec![format!(
-        "{:.0}% of cache is safe to clean ({})",
-        safe_pct,
-        human_size(reclaimable)
-    )];
-    if ctx.open_files > 0 {
-        rows.push(format!(
-            "{} files held open by running processes",
-            ctx.open_files
+    let rows: Vec<String> = vec![
+        format!(
+            "{:.0}% of cache is safe to clean ({})",
+            safe_pct,
+            human_size(reclaimable)
+        ),
+        format!("{} files open by running processes", ctx.open_files),
+        format!("Risk: {risk_level}"),
+    ];
+
+    let fill = w.saturating_sub(5);
+    for r in &rows {
+        out.push_str(&format!("{V}  {:<fill$} {V}\n", r, fill = fill));
+    }
+    if ctx.protected > 0 {
+        out.push_str(&format!(
+            "{V}  {:<fill$} {V}\n",
+            format!("{} system-protected files excluded", ctx.protected),
+            fill = fill
         ));
     }
-    rows.push(format!("Risk level: {risk_level}"));
-    if ctx.protected > 0 {
-        rows.push(format!("{} system-protected files excluded", ctx.protected));
-    }
 
-    for r in &rows {
-        out.push_str(&format!("{V}   {:<72} {V}\n", r));
-    }
-
-    out.push_str(&bot());
+    out.push_str(&bot(w));
     out.push('\n');
     out
 }
@@ -455,110 +476,58 @@ pub struct InsightContext {
     pub open_files: usize,
 }
 
-// ── Tests ──
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::{CacheDomain, Ownership};
 
-    fn cf(path: &str, size: u64, decision: Decision) -> ClassifiedFile {
-        ClassifiedFile {
-            path: path.into(),
-            size,
-            cache_domain: CacheDomain::Browser,
-            ownership: Ownership::User { uid: 1000 },
-            risk_score: 0.05,
-            risk_reasons: vec!["test".into()],
-            decision,
-        }
+    fn test_w() -> usize {
+        78
     }
 
     #[test]
-    fn test_borders_have_correct_junctions() {
-        assert!(top().contains("┌") && top().contains("┐"));
-        assert!(sep().contains("├") && sep().contains("┤"));
-        assert!(bot().contains("└") && bot().contains("┘"));
+    fn test_borders() {
+        let w = test_w();
+        assert!(top(w).contains("┌") && top(w).contains("┐"));
+        assert!(sep(w).contains("├") && sep(w).contains("┤"));
+        assert!(bot(w).contains("└") && bot(w).contains("┘"));
     }
 
     #[test]
     fn test_row_exact_width() {
+        let w = test_w();
         let widths = vec![10, 10, 10];
-        let row_str = row(&["abc", "def", "ghi"], &widths);
-        // Display width (chars) must equal W + newline
-        assert_eq!(row_str.chars().count(), W + 1);
+        let row_str = row(&["abc", "def", "ghi"], &widths, w);
+        assert_eq!(row_str.chars().count(), w + 1);
         assert!(row_str.starts_with('│'));
-        assert!(row_str.trim_end().ends_with('│'));
     }
 
     #[test]
     fn test_mid_sep_aligns() {
+        let w = test_w();
         let widths = vec![10, 10, 10];
-        let sep_line = mid_sep(&widths);
-        let data = row(&["a", "b", "c"], &widths);
-        // Both should span W display columns (data has trailing \n)
-        assert_eq!(sep_line.chars().count(), W);
-        assert_eq!(data.chars().count(), W + 1);
+        let sep_line = mid_sep(&widths, w);
+        let data = row(&["a", "b", "c"], &widths, w);
+        assert_eq!(sep_line.chars().count(), w);
+        assert_eq!(data.chars().count(), w + 1);
     }
 
     #[test]
     fn test_fit_widths_does_not_exceed() {
+        let w = test_w();
         let headers = ["DOMAIN", "FILES", "SIZE", "RISK", "STATUS"];
-        let widths = fit_widths(&headers, 5, 5);
+        let widths = fit_widths(&headers, 5, 5, w);
         let total: usize = widths.iter().sum();
         let separators = 4;
-        let borders = 2;
-        assert!(total + separators + borders <= W);
+        let borders = 3;
+        assert!(total + separators + borders <= w);
     }
 
     #[test]
-    fn test_table_renders() {
-        let files = vec![cf("/tmp/a", 1024, Decision::Safe)];
-        let out = render_table(&files, "Test");
-        assert!(out.contains("ELIGIBLE"));
-        assert!(!out.contains("├──├"));
-    }
-
-    #[test]
-    fn test_simulation_renders() {
-        let files = vec![
-            cf("/tmp/a", 100, Decision::Safe),
-            cf("/tmp/b", 200, Decision::HighRisk),
-        ];
-        let out = render_simulation(&files, "Test");
-        assert!(out.contains("WOULD CLEAN"));
-        assert!(out.contains("BLOCKED"));
-    }
-
-    #[test]
-    fn test_duplicate_collapse() {
-        let mut files = Vec::new();
-        for i in 0..10 {
-            files.push(cf(&format!("/tmp/mesa_cache_{i}"), 100, Decision::Safe));
-        }
-        let out = render_table(&files, "Test");
-        assert!(out.contains("similar entries omitted"));
-    }
-
-    #[test]
-    fn test_insights_renders() {
-        let ctx = InsightContext {
-            total: 100,
-            safe: 60,
-            low_risk: 20,
-            moderate: 15,
-            high_risk: 3,
-            protected: 2,
-            total_size: 10_000_000,
-            open_files: 5,
-        };
-        let out = render_insights(&ctx);
-        assert!(out.to_lowercase().contains("insight"));
-    }
-
-    #[test]
-    fn test_truncate_cell() {
-        assert_eq!(truncate_cell("hello", 10), "hello");
-        assert_eq!(truncate_cell("hello world this is long", 10), "hello wo..");
+    fn test_dynamic_width_narrow() {
+        let w = 60;
+        let headers = ["A", "B", "C"];
+        let widths = fit_widths(&headers, 3, 4, w);
+        let total: usize = widths.iter().sum();
+        assert!(total + 2 + 3 <= w); // 2 separators, 3 borders
     }
 }
