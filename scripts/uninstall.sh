@@ -19,7 +19,11 @@ echo ""
 
 # Remove binary
 if [ -f "$BIN_DIR/zacxiom" ]; then
-  rm -f "$BIN_DIR/zacxiom"
+  if [ -w "$BIN_DIR/zacxiom" ]; then
+    rm -f "$BIN_DIR/zacxiom"
+  else
+    sudo rm -f "$BIN_DIR/zacxiom"
+  fi
   echo -e "  ${GREEN}✓${NC} Removed: ${BIN_DIR}/zacxiom"
 else
   echo -e "  ${YELLOW}⚠${NC} Binary not found: ${BIN_DIR}/zacxiom"

@@ -32,10 +32,15 @@ cargo build --release --locked
 echo -e "  ${GREEN}✓${NC} Build complete"
 echo ""
 
-# Install binary
+# Install binary (build as user, install with sudo if needed)
 echo "Installing to ${BIN_DIR}..."
-mkdir -p "$BIN_DIR"
-install -m 755 target/release/zacxiom "$BIN_DIR/zacxiom"
+if [ -w "$BIN_DIR" ] || [ -w "$(dirname "$BIN_DIR")" ]; then
+  mkdir -p "$BIN_DIR"
+  install -m 755 target/release/zacxiom "$BIN_DIR/zacxiom"
+else
+  sudo mkdir -p "$BIN_DIR"
+  sudo install -m 755 target/release/zacxiom "$BIN_DIR/zacxiom"
+fi
 echo -e "  ${GREEN}✓${NC} Installed: ${BIN_DIR}/zacxiom"
 echo ""
 
