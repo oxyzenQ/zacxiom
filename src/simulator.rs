@@ -1,11 +1,12 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Dry-run simulator — mandatory before any clean operation.
+//! Dry-run simulator v3 — mandatory before any clean operation.
 //!
-//! Produces explainable output showing exactly what WOULD happen
-//! without touching a single file. Required by H5.
+//! v3: Rich reporting with disk gain estimates, health mode,
+//! dependency impact breakdown, and profile-aware summaries.
 
+use crate::profiles::{HealthMode, Profile};
 use crate::rules::{ClassifiedFile, Decision};
 use serde::Serialize;
 
@@ -24,6 +25,10 @@ pub struct SimulationReport {
     pub high_risk_size: u64,
     pub protected_count: usize,
     pub protected_size: u64,
+    pub health_mode: String,
+    pub profile: String,
+    pub disk_gain: String,
+    pub recommendation: String,
     pub entries: Vec<SimulationEntry>,
 }
 
@@ -39,8 +44,25 @@ pub struct SimulationEntry {
     pub reason: String,
 }
 
-/// Run simulation over classified files.
-pub fn simulate(files: &[ClassifiedFile]) -> SimulationReport {
+/// Run simulation over classified files with profile/health context.
+pub fn simulate(
+    files: &[ClassifiedFile],
+    health: &HealthMode,
+    profile: &Profile,
+) -> SimulationReport {
+    let gain = crate::profiles::estimate_disk_gain(
+        files
+            .iter()
+            .filter(|f| matches!(f.decision, Decision::Safe))
+            .map(|f| f.size)
+            .sum(),
+        files
+            .iter()
+            .filter(|f| matches!(f.decision, Decision::LowRisk))
+            .map(|f| f.size)
+            .sum(),
+    );
+
     let mut report = SimulationReport {
         total_files: files.len(),
         total_size: files.iter().map(|f| f.size).sum(),
@@ -54,6 +76,10 @@ pub fn simulate(files: &[ClassifiedFile]) -> SimulationReport {
         high_risk_size: 0,
         protected_count: 0,
         protected_size: 0,
+        health_mode: format!("{:?}", health),
+        profile: format!("{:?}", profile),
+        disk_gain: human_size(gain.total_reclaimable),
+        recommendation: gain.recommendation,
         entries: Vec::with_capacity(files.len()),
     };
 
@@ -115,6 +141,13 @@ pub fn format_report(report: &SimulationReport) -> String {
         ));
     }
 
+    out.push_str("\n───────────────────────────────────────────\n");
+    out.push_str("  SYSTEM CONTEXT\n");
+    out.push_str("───────────────────────────────────────────\n");
+    out.push_str(&format!("  Health mode : {}\n", report.health_mode));
+    out.push_str(&format!("  Profile     : {}\n", report.profile));
+    out.push_str(&format!("  Est. gain   : {}\n", report.disk_gain));
+    out.push_str(&format!("  → {}\n", report.recommendation));
     out.push_str("\n───────────────────────────────────────────\n");
     out.push_str("  SUMMARY\n");
     out.push_str("───────────────────────────────────────────\n");
@@ -194,7 +227,7 @@ mod tests {
             make_file("/d", 500, Decision::Protected),
         ];
 
-        let report = simulate(&files);
+        let report = simulate(&files, &HealthMode::Normal, &Profile::Dev);
         assert_eq!(report.total_files, 4);
         assert_eq!(report.total_size, 850);
         assert_eq!(report.safe_count, 2);

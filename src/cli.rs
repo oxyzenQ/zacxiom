@@ -47,6 +47,10 @@ pub enum Command {
         #[arg(short = 'm', long, default_value = "1")]
         min_size: u64,
 
+        /// Profile: minimal, dev, gaming, server
+        #[arg(short = 'p', long, default_value = "dev")]
+        profile: String,
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -61,6 +65,10 @@ pub enum Command {
         /// Maximum directory depth (0 = unlimited)
         #[arg(short, long, default_value = "0")]
         depth: usize,
+
+        /// Profile: minimal, dev, gaming, server
+        #[arg(short = 'p', long, default_value = "dev")]
+        profile: String,
 
         /// Output as JSON
         #[arg(long)]
@@ -77,6 +85,10 @@ pub enum Command {
         #[arg(short, long, default_value = "0")]
         depth: usize,
 
+        /// Profile: minimal, dev, gaming, server
+        #[arg(short = 'p', long, default_value = "dev")]
+        profile: String,
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -91,6 +103,10 @@ pub enum Command {
         /// Maximum directory depth (0 = unlimited)
         #[arg(short, long, default_value = "0")]
         depth: usize,
+
+        /// Profile: minimal, dev, gaming, server
+        #[arg(short = 'p', long, default_value = "dev")]
+        profile: String,
 
         /// Also clean LOW_RISK files
         #[arg(long)]

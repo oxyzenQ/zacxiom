@@ -1,11 +1,11 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Zacxiom — Filesystem Intelligence Engine v2
+//! Zacxiom — Filesystem Intelligence Engine v3
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.
-//! v2: Process-aware protection + history tracking.
+//! v3: Context engine — profiles, health detection, rich simulation.
 
 mod cache;
 mod cleaner;
@@ -13,6 +13,7 @@ mod cli;
 mod history;
 mod ownership;
 mod procfs;
+mod profiles;
 mod risk;
 mod rules;
 mod scanner;
@@ -41,33 +42,33 @@ const BUILD_TARGET: &str = {
     }
 };
 
-/// State built once per command run for v2 awareness.
 struct RunContext {
     open_files: HashSet<PathBuf>,
     history_cleaned: HashSet<String>,
+    health: profiles::HealthMode,
+    profile: profiles::Profile,
 }
 
 impl RunContext {
-    fn new() -> Self {
-        let open_files = procfs::build_open_file_set();
-        let history = history::History::load();
-        let history_cleaned: HashSet<String> =
-            history.previously_cleaned_paths().into_iter().collect();
+    fn new(profile_arg: &str) -> Self {
         RunContext {
-            open_files,
-            history_cleaned,
+            open_files: procfs::build_open_file_set(),
+            history_cleaned: {
+                let h = history::History::load();
+                h.previously_cleaned_paths().into_iter().collect()
+            },
+            health: profiles::detect_health(),
+            profile: profiles::Profile::from_str(profile_arg),
         }
     }
 }
 
 fn main() {
     let cli = Cli::parse();
-
     if cli.version {
         print_version();
         return;
     }
-
     if cli.check_update {
         check_update();
         return;
@@ -83,30 +84,42 @@ fn main() {
             paths,
             depth,
             min_size,
+            profile,
             json,
-        } => run_scan(paths, depth, min_size, json, false),
+        } => run_scan(paths, depth, min_size, json, false, &profile),
 
-        Command::Report { paths, depth, json } => run_scan(paths, depth, 1, json, true),
+        Command::Report {
+            paths,
+            depth,
+            profile,
+            json,
+        } => run_scan(paths, depth, 1, json, true, &profile),
 
-        Command::Simulate { paths, depth, json } => run_simulate(paths, depth, json),
+        Command::Simulate {
+            paths,
+            depth,
+            profile,
+            json,
+        } => run_simulate(paths, depth, json, &profile),
 
         Command::Clean {
             paths,
             depth,
+            profile,
             smart,
             force,
             json,
-        } => run_clean(paths, depth, smart, force, json),
+        } => run_clean(paths, depth, smart, force, json, &profile),
 
         Command::CheckUpdate => check_update(),
     }
 }
 
 fn print_version() {
-    let git_hash = option_env!("ZACXIOM_GIT_HASH").unwrap_or("unknown");
+    let h = option_env!("ZACXIOM_GIT_HASH").unwrap_or("unknown");
     println!("zacxiom -V/--version");
     println!("Version: v{}", env!("CARGO_PKG_VERSION"));
-    println!("Build: {} ({})", BUILD_TARGET, git_hash);
+    println!("Build: {} ({})", BUILD_TARGET, h);
     println!("Copyright: (c) 2026 rezky_nightky (oxyzenQ)");
     println!("License: GPL-3.0");
     println!("Source: https://github.com/oxyzenQ/zacxiom");
@@ -114,45 +127,32 @@ fn print_version() {
 
 fn check_update() {
     println!("Checking for updates...");
-    let current = env!("CARGO_PKG_VERSION");
-    println!("Current: v{}", current);
-
+    let cur = env!("CARGO_PKG_VERSION");
+    println!("Current: v{cur}");
     match fetch_latest_release() {
-        Ok(latest) => {
-            if latest != current {
-                println!("Latest : v{}", latest);
-                println!(
-                    "Update: https://github.com/oxyzenQ/zacxiom/releases/tag/v{}",
-                    latest
-                );
-            } else {
-                println!("zacxiom is up to date (v{}).", current);
-            }
+        Ok(latest) if latest != cur => {
+            println!("Latest : v{latest}");
+            println!("Update: https://github.com/oxyzenQ/zacxiom/releases/tag/v{latest}");
         }
-        Err(e) => {
-            eprintln!("Failed to check for updates: {e}");
-        }
+        Ok(_) => println!("zacxiom is up to date (v{cur})."),
+        Err(e) => eprintln!("Failed to check for updates: {e}"),
     }
 }
 
 fn fetch_latest_release() -> Result<String, String> {
-    let url = "https://api.github.com/repos/oxyzenQ/zacxiom/releases/latest";
-    let response = ureq::get(url)
+    let resp = ureq::get("https://api.github.com/repos/oxyzenQ/zacxiom/releases/latest")
         .header("User-Agent", "zacxiom-check-update")
         .call()
-        .map_err(|e| format!("HTTP error: {e}"))?;
-
-    let body = response
+        .map_err(|e| format!("HTTP: {e}"))?;
+    let body = resp
         .into_body()
         .read_to_string()
-        .map_err(|e| format!("Read error: {e}"))?;
-    let json: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("Parse error: {e}"))?;
-
+        .map_err(|e| format!("Read: {e}"))?;
+    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Parse: {e}"))?;
     json["tag_name"]
         .as_str()
         .map(|s| s.trim_start_matches('v').to_string())
-        .ok_or_else(|| "No tag_name in response".to_string())
+        .ok_or_else(|| "No tag_name".into())
 }
 
 fn resolve_roots(paths: Vec<String>) -> Vec<PathBuf> {
@@ -163,21 +163,17 @@ fn resolve_roots(paths: Vec<String>) -> Vec<PathBuf> {
     }
 }
 
-/// Classify files through the full pipeline using v2 engine.
-fn classify_files(
-    entries: Vec<scanner::ScanEntry>,
-    ctx: &RunContext,
-) -> Vec<rules::ClassifiedFile> {
+fn classify(entries: Vec<scanner::ScanEntry>, ctx: &RunContext) -> Vec<rules::ClassifiedFile> {
     entries
         .into_iter()
         .map(|e| {
-            let domain = cache::classify(&e.path);
-            let ownership = ownership::detect(&e.path);
+            let d = cache::classify(&e.path);
+            let o = ownership::detect(&e.path);
             risk::score_v2(
                 &e.path.to_string_lossy(),
                 e.size,
-                domain,
-                ownership,
+                d,
+                o,
                 Some(&ctx.open_files),
                 Some(&ctx.history_cleaned),
             )
@@ -185,18 +181,33 @@ fn classify_files(
         .collect()
 }
 
-fn run_scan(paths: Vec<String>, depth: usize, min_size: u64, json: bool, verbose: bool) {
-    let ctx = RunContext::new();
+fn run_scan(
+    paths: Vec<String>,
+    depth: usize,
+    min_size: u64,
+    json: bool,
+    verbose: bool,
+    profile: &str,
+) {
+    let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, min_size, true);
-    let classified = classify_files(entries, &ctx);
+    let classified = classify(entries, &ctx);
+    let health_str = format!("{:?}", ctx.health);
+    let profile_str = format!("{:?}", ctx.profile);
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&classified).unwrap());
+        let out = serde_json::json!({
+            "health": health_str,
+            "profile": profile_str,
+            "files": classified,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else if verbose {
-        let sim = simulator::simulate(&classified);
+        let sim = simulator::simulate(&classified, &ctx.health, &ctx.profile);
         println!("{}", simulator::format_report(&sim));
     } else {
+        println!("Health: {health_str} | Profile: {profile_str}");
         println!("Scanned {} files", classified.len());
         let total: u64 = classified.iter().map(|f| f.size).sum();
         println!("Total size: {}", simulator::human_size(total));
@@ -211,12 +222,12 @@ fn run_scan(paths: Vec<String>, depth: usize, min_size: u64, json: bool, verbose
     }
 }
 
-fn run_simulate(paths: Vec<String>, depth: usize, json: bool) {
-    let ctx = RunContext::new();
+fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
+    let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, 1, true);
-    let classified = classify_files(entries, &ctx);
-    let report = simulator::simulate(&classified);
+    let classified = classify(entries, &ctx);
+    let report = simulator::simulate(&classified, &ctx.health, &ctx.profile);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
@@ -225,17 +236,22 @@ fn run_simulate(paths: Vec<String>, depth: usize, json: bool) {
     }
 }
 
-fn run_clean(paths: Vec<String>, depth: usize, smart: bool, force: bool, json: bool) {
-    let ctx = RunContext::new();
+fn run_clean(
+    paths: Vec<String>,
+    depth: usize,
+    smart: bool,
+    force: bool,
+    json: bool,
+    profile: &str,
+) {
+    let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, 1, true);
-    let classified = classify_files(entries, &ctx);
+    let classified = classify(entries, &ctx);
 
-    // H5: simulation MUST run before clean
-    let sim_report = simulator::simulate(&classified);
-    println!("{}", simulator::format_report(&sim_report));
+    let sim = simulator::simulate(&classified, &ctx.health, &ctx.profile);
+    println!("{}", simulator::format_report(&sim));
 
-    // H6: force mode gating
     if force {
         use std::io::{self, Write};
         print!("\n⚠️  --force mode: Type YES to proceed: ");
@@ -248,13 +264,12 @@ fn run_clean(paths: Vec<String>, depth: usize, smart: bool, force: bool, json: b
         }
     }
 
-    let clean_report = cleaner::clean(&classified, smart, force);
+    let report = cleaner::clean(&classified, smart, force);
 
-    // v2: Record history
-    let mut history = history::History::load();
-    history.add(history::CleanRecord {
+    let mut hist = history::History::load();
+    hist.add(history::CleanRecord {
         timestamp: chrono_now(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: env!("CARGO_PKG_VERSION").into(),
         action: if force {
             "clean --force".into()
         } else if smart {
@@ -262,9 +277,9 @@ fn run_clean(paths: Vec<String>, depth: usize, smart: bool, force: bool, json: b
         } else {
             "clean".into()
         },
-        files_removed: clean_report.files_removed,
-        bytes_freed: clean_report.bytes_freed,
-        files_skipped: clean_report.files_skipped,
+        files_removed: report.files_removed,
+        bytes_freed: report.bytes_freed,
+        files_skipped: report.files_skipped,
         paths: classified.iter().map(|f| f.path.clone()).collect(),
     });
 
@@ -272,16 +287,16 @@ fn run_clean(paths: Vec<String>, depth: usize, smart: bool, force: bool, json: b
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "files_removed": clean_report.files_removed,
-                "bytes_freed": clean_report.bytes_freed,
-                "files_skipped": clean_report.files_skipped,
-                "bytes_skipped": clean_report.bytes_skipped,
-                "errors": clean_report.errors.iter().map(|e| serde_json::json!({"path": e.path, "error": e.error})).collect::<Vec<_>>(),
+                "files_removed": report.files_removed,
+                "bytes_freed": report.bytes_freed,
+                "files_skipped": report.files_skipped,
+                "bytes_skipped": report.bytes_skipped,
+                "errors": report.errors.iter().map(|e| serde_json::json!({"path": e.path, "error": e.error})).collect::<Vec<_>>(),
             }))
             .unwrap()
         );
     } else {
-        println!("{}", cleaner::format_clean_report(&clean_report));
+        println!("{}", cleaner::format_clean_report(&report));
     }
 }
 
@@ -296,53 +311,42 @@ fn format_decision(d: &rules::Decision) -> &'static str {
 }
 
 fn chrono_now() -> String {
-    // ISO 8601 timestamp without external crate
-    let now = std::time::SystemTime::now()
+    let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    // Simple UTC timestamp
-    let days_since_epoch = secs / 86400;
-    let time_of_day = secs % 86400;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let seconds = time_of_day % 60;
+        .unwrap_or_default()
+        .as_secs();
+    let days = secs / 86400;
+    let tod = secs % 86400;
+    let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
 
-    // Unix epoch to date conversion (approximate, good enough for history)
     let mut y = 1970i64;
-    let mut d = days_since_epoch as i64;
+    let mut d = days as i64;
     loop {
-        let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if d < days_in_year {
+        let diy = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+            366
+        } else {
+            365
+        };
+        if d < diy {
             break;
         }
-        d -= days_in_year;
+        d -= diy;
         y += 1;
     }
-    let (mo, day) = month_day(y, d);
-
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, mo, day, hours, minutes, seconds
-    )
-}
-
-fn is_leap(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
-}
-
-fn month_day(y: i64, d: i64) -> (i64, i64) {
-    let months = if is_leap(y) {
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let mdays: [i64; 12] = if leap {
         [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     } else {
         [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     };
-    let mut remaining = d;
-    for (i, &days) in months.iter().enumerate() {
-        if remaining < days {
-            return ((i + 1) as i64, remaining + 1);
+    let mut rem = d;
+    let mut mo = 1i64;
+    for &md in &mdays {
+        if rem < md {
+            break;
         }
-        remaining -= days;
+        rem -= md;
+        mo += 1;
     }
-    (12, remaining + 1)
+    format!("{y:04}-{mo:02}-{:02}T{h:02}:{m:02}:{s:02}Z", rem + 1)
 }

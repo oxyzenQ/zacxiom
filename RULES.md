@@ -66,7 +66,7 @@ A correct "do nothing" is better than an incorrect deletion.
 
 ---
 
-## 🟡 RISK CLASSIFICATION RULES (v2.0.0)
+## 🟡 RISK CLASSIFICATION RULES (v3.0.0)
 
 ### R1 — Safe (score 0.0–0.2)
 - File is in a known cache directory
