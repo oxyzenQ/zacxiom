@@ -1,4 +1,4 @@
-# 🧱 ZACXIOM ARCHITECTURE v1.0.0 — v5.0.0
+# 🧱 ZACXIOM ARCHITECTURE v2.0.0 — v5.0.0
 
 > **Constraint:** Core engine <1k LOC. Plugins unlimited.
 > **Law:** If a module doesn't serve safety, explainability, or awareness — it doesn't exist.
@@ -116,7 +116,7 @@ enum Decision {
 | **cleaner** | safe only | +low-risk | +profile modes | +force gated | final |
 | **rules** | immutable rules | +active protection | +health profiles | +user policies | locked |
 
-## 📏 LOC Budget (v1.0.0)
+## 📏 LOC Budget (v2.0.0)
 
 | Module | Target LOC |
 |--------|-----------|

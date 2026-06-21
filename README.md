@@ -60,7 +60,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for module structure, data flow, and LOC 
 ## Version
 
 ```text
-zacxiom v1.0.0
+zacxiom v2.0.0
 Build: linux-x86_64
 Copyright: (c) 2026 rezky_nightky (oxyzenQ)
 License: GPL-3.0
