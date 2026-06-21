@@ -1,16 +1,13 @@
 # zacxiom
 
-**Filesystem intelligence for Linux.**
+Filesystem intelligence for Linux.
 
-**Observe → Understand → Decide → Act**
+Observe → Understand → Decide → Act
+
+Safe-by-default filesystem intelligence engine that evaluates risk, explains decisions, and reclaims space only when it is safe to do so.
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-rezky-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/rezky)
 
-zacxiom is a filesystem intelligence engine for Linux.
-
-Unlike traditional cleanup tools that focus on deleting files, zacxiom focuses on understanding filesystem state, evaluating risk, and explaining every decision before any action is taken.
-
-A correct decision is more important than reclaiming space.
 
 ---
 
