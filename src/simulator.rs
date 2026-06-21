@@ -126,6 +126,7 @@ pub fn simulate(
 }
 
 /// Format a simulation report as human-readable text (the standard format).
+#[allow(dead_code)]
 pub fn format_report(report: &SimulationReport) -> String {
     let mut out = String::new();
 

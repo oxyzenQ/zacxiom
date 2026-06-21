@@ -5,17 +5,20 @@
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.
-//! v5: Final — context memory, safety lock, production ready.
+//! v5.1: UX overhaul — table-first output, error classification, progress engine.
 
 mod cache;
 mod cleaner;
 mod cli;
+mod display;
+mod errors;
 mod history;
 mod memory;
 mod ownership;
 mod policy;
 mod procfs;
 mod profiles;
+mod progress;
 mod risk;
 mod rules;
 mod safety;
@@ -136,14 +139,24 @@ fn print_version() {
 fn check_update() {
     println!("Checking for updates...");
     let cur = env!("CARGO_PKG_VERSION");
-    println!("Current: v{cur}");
+    println!("Current version: v{cur}");
+
     match fetch_latest_release() {
         Ok(latest) if latest != cur => {
-            println!("Latest : v{latest}");
+            println!("Latest version : v{latest}");
             println!("Update: https://github.com/oxyzenQ/zacxiom/releases/tag/v{latest}");
         }
         Ok(_) => println!("zacxiom is up to date (v{cur})."),
-        Err(e) => eprintln!("Failed to check for updates: {e}"),
+        Err(e) => {
+            let user_msg = if e.contains("403") || e.contains("rate") {
+                "Update check unavailable (GitHub API rate limited).\nRetry later or check: https://github.com/oxyzenQ/zacxiom/releases"
+            } else if e.contains("404") {
+                "No releases found yet."
+            } else {
+                "Update check unavailable (network issue).\nVerify at: https://github.com/oxyzenQ/zacxiom"
+            };
+            println!("{user_msg}");
+        }
     }
 }
 
@@ -208,50 +221,76 @@ fn run_scan(
     verbose: bool,
     profile: &str,
 ) {
+    let mut prog = progress::Progress::new(json);
+    prog.start_phase(progress::Phase::Scan);
+
     let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, min_size, true);
+    prog.advance();
+
     let classified = classify(entries, &ctx);
-    let health_str = format!("{:?}", ctx.health);
-    let profile_str = format!("{:?}", ctx.profile);
+    prog.advance();
+    prog.advance();
+    prog.done();
 
     if json {
         let out = serde_json::json!({
-            "health": health_str,
-            "profile": profile_str,
+            "health": format!("{:?}", ctx.health),
+            "profile": format!("{:?}", ctx.profile),
             "files": classified,
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else if verbose {
-        let sim = simulator::simulate(&classified, &ctx.health, &ctx.profile);
-        println!("{}", simulator::format_report(&sim));
+        println!("\n{}", display::render_table(&classified, "REPORT"));
+        let (safe, low, mod_, high, prot) = count_decisions(&classified);
+        let insight_ctx = display::InsightContext {
+            total: classified.len(),
+            safe,
+            low_risk: low,
+            moderate: mod_,
+            high_risk: high,
+            protected: prot,
+            total_size: classified.iter().map(|f| f.size).sum(),
+            open_files: ctx.open_files.len(),
+        };
+        println!("{}", display::render_insights(&insight_ctx));
     } else {
-        println!("Health: {health_str} | Profile: {profile_str}");
-        println!("Scanned {} files", classified.len());
-        let total: u64 = classified.iter().map(|f| f.size).sum();
-        println!("Total size: {}", simulator::human_size(total));
-        for f in &classified {
-            println!(
-                "  {} [{:.2}] → {}",
-                f.path,
-                f.risk_score,
-                format_decision(&f.decision)
-            );
-        }
+        println!("\n{}", display::render_table(&classified, "SCAN"));
     }
 }
 
 fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
+    let mut prog = progress::Progress::new(json);
+    prog.start_phase(progress::Phase::Scan);
+
     let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, 1, true);
+    prog.advance();
+
     let classified = classify(entries, &ctx);
-    let report = simulator::simulate(&classified, &ctx.health, &ctx.profile);
+    prog.advance();
+    prog.advance();
+    prog.done();
 
     if json {
+        let report = simulator::simulate(&classified, &ctx.health, &ctx.profile);
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else {
-        println!("{}", simulator::format_report(&report));
+        println!("\n{}", display::render_simulation(&classified, "DRY RUN"));
+        let (safe, low, mod_, high, prot) = count_decisions(&classified);
+        let insight_ctx = display::InsightContext {
+            total: classified.len(),
+            safe,
+            low_risk: low,
+            moderate: mod_,
+            high_risk: high,
+            protected: prot,
+            total_size: classified.iter().map(|f| f.size).sum(),
+            open_files: ctx.open_files.len(),
+        };
+        println!("{}", display::render_insights(&insight_ctx));
     }
 }
 
@@ -268,8 +307,25 @@ fn run_clean(
     let entries = scanner::scan(&roots, depth, 1, true);
     let classified = classify(entries, &ctx);
 
-    let sim = simulator::simulate(&classified, &ctx.health, &ctx.profile);
-    println!("{}", simulator::format_report(&sim));
+    let _sim = simulator::simulate(&classified, &ctx.health, &ctx.profile);
+    if !json {
+        println!(
+            "\n{}",
+            display::render_simulation(&classified, "BEFORE CLEAN")
+        );
+        let (safe, low, mod_, high, prot) = count_decisions(&classified);
+        let insight_ctx = display::InsightContext {
+            total: classified.len(),
+            safe,
+            low_risk: low,
+            moderate: mod_,
+            high_risk: high,
+            protected: prot,
+            total_size: classified.iter().map(|f| f.size).sum(),
+            open_files: ctx.open_files.len(),
+        };
+        println!("{}", display::render_insights(&insight_ctx));
+    }
 
     // v5: Safety lock validation
     let check = safety::validate_clean(&classified, smart, force, true);
@@ -338,22 +394,52 @@ fn run_clean(
                 "bytes_freed": report.bytes_freed,
                 "files_skipped": report.files_skipped,
                 "bytes_skipped": report.bytes_skipped,
-                "errors": report.errors.iter().map(|e| serde_json::json!({"path": e.path, "error": e.error})).collect::<Vec<_>>(),
+                "errors": report.errors.iter().map(|e| {
+                    let kind = errors::ErrorKind::from_io_error(
+                        &std::io::Error::other(e.error.clone())
+                    );
+                    serde_json::json!({"path": e.path, "kind": kind.label(), "detail": e.error})
+                }).collect::<Vec<_>>(),
             }))
             .unwrap()
         );
     } else {
-        println!("{}", cleaner::format_clean_report(&report));
-    }
-}
-
-fn format_decision(d: &rules::Decision) -> &'static str {
-    match d {
-        rules::Decision::Safe => "SAFE",
-        rules::Decision::LowRisk => "LOW_RISK",
-        rules::Decision::Moderate => "MODERATE",
-        rules::Decision::HighRisk => "HIGH_RISK",
-        rules::Decision::Protected => "PROTECTED",
+        let clean_msg = format!(
+            "CLEAN COMPLETE — {} files freed ({})",
+            report.files_removed,
+            display::human_size(report.bytes_freed)
+        );
+        let mut err_summary = errors::ErrorSummary::default();
+        for e in &report.errors {
+            let kind = errors::ErrorKind::from_io_error(&std::io::Error::other(e.error.clone()));
+            match kind {
+                errors::ErrorKind::PermissionDenied => err_summary.permission_denied += 1,
+                errors::ErrorKind::InUse => err_summary.in_use += 1,
+                errors::ErrorKind::SystemFile => err_summary.system_protected += 1,
+                errors::ErrorKind::LockedProcess => err_summary.locked += 1,
+                errors::ErrorKind::NotFound => err_summary.not_found += 1,
+                _ => err_summary.unknown += 1,
+            }
+        }
+        println!("\n┌{:─^78}┐", "");
+        println!("│ {:^76} │", clean_msg);
+        if report.files_skipped > 0 {
+            println!(
+                "│ {:<76} │",
+                format!(
+                    "Skipped: {} files ({})",
+                    report.files_skipped,
+                    display::human_size(report.bytes_skipped)
+                )
+            );
+        }
+        if !err_summary.is_empty() {
+            let summary_lines = err_summary.format_summary();
+            for line in summary_lines.lines() {
+                println!("│ {:<76} │", line.trim());
+            }
+        }
+        println!("└{:─^78}┘", "");
     }
 }
 
@@ -423,6 +509,21 @@ fn run_status() {
     );
     println!("═══════════════════════════════════");
 }
+
+fn count_decisions(files: &[rules::ClassifiedFile]) -> (usize, usize, usize, usize, usize) {
+    let (mut safe, mut low, mut mod_, mut high, mut prot) = (0, 0, 0, 0, 0);
+    for f in files {
+        match f.decision {
+            rules::Decision::Safe => safe += 1,
+            rules::Decision::LowRisk => low += 1,
+            rules::Decision::Moderate => mod_ += 1,
+            rules::Decision::HighRisk => high += 1,
+            rules::Decision::Protected => prot += 1,
+        }
+    }
+    (safe, low, mod_, high, prot)
+}
+
 fn chrono_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

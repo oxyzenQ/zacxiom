@@ -65,6 +65,7 @@ pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool) -> CleanReport 
 }
 
 /// Format a clean report for display.
+#[allow(dead_code)]
 pub fn format_clean_report(report: &CleanReport) -> String {
     let mut out = String::new();
 
