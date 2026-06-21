@@ -123,4 +123,14 @@ pub enum Command {
 
     /// Check for latest upstream release on GitHub
     CheckUpdate,
+
+    /// Undo last clean operation from snapshot
+    Undo {
+        /// Snapshot ID to restore (omit for latest)
+        #[arg(short, long)]
+        id: Option<String>,
+    },
+
+    /// Show system status: health, history, snapshots
+    Status,
 }

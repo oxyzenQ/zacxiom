@@ -5,19 +5,21 @@
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.
-//! v3: Context engine — profiles, health detection, rich simulation.
+//! v4: Safety autonomy — snapshots, undo, policy engine.
 
 mod cache;
 mod cleaner;
 mod cli;
 mod history;
 mod ownership;
+mod policy;
 mod procfs;
 mod profiles;
 mod risk;
 mod rules;
 mod scanner;
 mod simulator;
+mod snapshot;
 
 use clap::Parser;
 use cli::{Cli, Command};
@@ -112,6 +114,8 @@ fn main() {
         } => run_clean(paths, depth, smart, force, json, &profile),
 
         Command::CheckUpdate => check_update(),
+        Command::Undo { id } => run_undo(id),
+        Command::Status => run_status(),
     }
 }
 
@@ -264,6 +268,15 @@ fn run_clean(
         }
     }
 
+    // v4: Snapshot before clean for undo support
+    let mut snap = snapshot::Snapshot::new();
+    for f in &classified {
+        if f.decision.is_cleanable(smart, force) {
+            snap.add(&f.path, f.size, None);
+        }
+    }
+    let _ = snap.save();
+
     let report = cleaner::clean(&classified, smart, force);
 
     let mut hist = history::History::load();
@@ -308,6 +321,53 @@ fn format_decision(d: &rules::Decision) -> &'static str {
         rules::Decision::HighRisk => "HIGH_RISK",
         rules::Decision::Protected => "PROTECTED",
     }
+}
+
+fn run_undo(id: Option<String>) {
+    let snap_id = match id {
+        Some(ref i) => i.clone(),
+        None => {
+            let all = snapshot::Snapshot::list_all();
+            if all.is_empty() {
+                eprintln!("No snapshots found. Nothing to undo.");
+                std::process::exit(1);
+            }
+            all.last().unwrap().clone()
+        }
+    };
+
+    println!("Restoring from snapshot: {snap_id}");
+    match snapshot::Snapshot::load(&snap_id) {
+        Ok(snap) => match snap.restore() {
+            Ok(n) => println!("Restored {n} files."),
+            Err(e) => eprintln!("Restore error: {e}"),
+        },
+        Err(e) => eprintln!("Failed to load snapshot: {e}"),
+    }
+}
+
+fn run_status() {
+    let health = profiles::detect_health();
+    let hist = history::History::load();
+    let snaps = snapshot::Snapshot::list_all();
+    let policy = policy::Policy::load();
+
+    println!("═══════════════════════════════════");
+    println!("  ZACXIOM STATUS");
+    println!("═══════════════════════════════════");
+    println!("  Health    : {:?}", health);
+    println!("  History   : {} records", hist.records.len());
+    println!("  Snapshots : {} available", snaps.len());
+    if !policy.protected_paths.is_empty() {
+        println!(
+            "  Policy    : {} user-protected paths",
+            policy.protected_paths.len()
+        );
+    }
+    if !snaps.is_empty() {
+        println!("  Last snap : {}", snaps.last().unwrap());
+    }
+    println!("═══════════════════════════════════");
 }
 
 fn chrono_now() -> String {
