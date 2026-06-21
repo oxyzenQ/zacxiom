@@ -1,17 +1,40 @@
-# zacxiom — Filesystem Intelligence Engine
+# zacxiom
+
+**Filesystem intelligence for Linux.**
 
 **Observe → Understand → Decide → Act**
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-rezky-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/rezky)
 
-Safe-by-default filesystem intelligence engine for Linux. Not a cleaner — an intelligence system that happens to reclaim space safely. Every decision is justified. Every action is logged.
+zacxiom is a filesystem intelligence engine for Linux.
+
+Unlike traditional cleanup tools that focus on deleting files, zacxiom focuses on understanding filesystem state, evaluating risk, and explaining every decision before any action is taken.
+
+A correct decision is more important than reclaiming space.
+
+---
 
 ## Philosophy
 
-```text
-Zacxiom's primary goal is correctness of decision, not amount of space freed.
-A correct "do nothing" is better than an incorrect deletion.
-```
+zacxiom follows four principles.
+
+### 1. Safety Before Space
+
+Recovering disk space is secondary. The primary objective is preventing incorrect deletion.
+
+### 2. Explainability By Default
+
+Every recommendation includes reason, risk, and decision. No silent actions. No hidden logic.
+
+### 3. Context Matters
+
+A file is never evaluated in isolation. Risk assessment considers filesystem location, ownership, process activity, regenerability, and system impact.
+
+### 4. Observe Before Acting
+
+The zacxiom model is **Observe → Understand → Decide → Act**. Never skip directly from observing to deleting.
+
+---
 
 ## Quick Start
 
@@ -19,10 +42,10 @@ A correct "do nothing" is better than an incorrect deletion.
 # Build
 ./build.sh check-all
 
-# Scan for cache files
+# Scan — analytical view: what exists, what is safe
 zacxiom scan
 
-# Simulate — always run before clean
+# Simulate — operational view: what would happen
 zacxiom simulate
 
 # Safe clean only
@@ -33,14 +56,28 @@ zacxiom clean --smart
 
 # Force clean (requires explicit YES confirmation)
 zacxiom clean --force
+
+# Undo last clean operation
+zacxiom undo
+
+# System status overview
+zacxiom status
 ```
 
-## Output Standard
+## Intelligence Layers
 
-Every file in every report follows:
-```
-file → reason → risk → decision
-```
+| Layer | Capability |
+|-------|-----------|
+| **Domain Summary** | Cache categorized by type — browser, build, system, package |
+| **Decision Summary** | Immediate answer: files found, safe to clean, blocked, recoverable |
+| **Risk Engine** | 7-signal scoring — age, process, ownership, regenerability, path, history, memory |
+| **Simulation** | Mandatory dry-run with action labels: WOULD CLEAN, BLOCKED, NEVER |
+| **Context Memory** | Adaptive thresholds per system — learns what you trust |
+| **Safety Lock** | H1–H6 hard rules enforced at runtime — no bypass |
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for module structure and data flow.
+
+See [RULES.md](RULES.md) for the complete hardened safety specification.
 
 ## Safety Guarantees
 
@@ -51,11 +88,7 @@ file → reason → risk → decision
 - **H5** — Simulation mandatory before clean
 - **H6** — `--force` requires explicit `YES` confirmation
 
-See [RULES.md](RULES.md) for the complete hardened safety specification.
-
-## Architecture
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for module structure, data flow, and LOC budget.
+---
 
 ## Version
 
