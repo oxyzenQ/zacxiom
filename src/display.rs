@@ -68,8 +68,9 @@ fn data_row(vals: &[String], widths: &[usize]) -> String {
 }
 
 /// Core row renderer — exact width, no overflow.
+/// Layout: │ cell0  cell1  cell2  │
 fn row(cells: &[&str], widths: &[usize]) -> String {
-    let mut s = V.to_string();
+    let mut s = format!("{V} ");
     for (i, cell) in cells.iter().enumerate() {
         let trimmed = truncate_cell(cell, widths[i]);
         s.push_str(&format!("{:w$}", trimmed, w = widths[i]));
@@ -95,32 +96,39 @@ fn truncate_cell(s: &str, max: usize) -> String {
 }
 
 /// Compute column widths that fit within terminal width.
-/// Strategy: measure header widths, allocate proportionally.
+/// Accounts for: left border+space (2), right border (1), inter-column spaces (N-1).
 fn fit_widths(headers: &[&str], n_cols: usize, min_w: usize) -> Vec<usize> {
-    let separators = n_cols.saturating_sub(1); // spaces between columns
-    let borders = 2; // │ left + │ right
+    let separators = n_cols.saturating_sub(1);
+    let borders = 3; // "│ " (2) + "│" (1)
     let available = W.saturating_sub(borders + separators);
 
-    // Start with header widths, capped
+    // Start with header widths
     let mut widths: Vec<usize> = headers.iter().map(|h| h.len().max(min_w)).collect();
     let total: usize = widths.iter().sum();
 
     if total <= available {
         // Distribute remaining space proportionally
         let slack = available - total;
-        let mut extra = slack;
-        for w in widths.iter_mut() {
-            let add = extra / n_cols;
+        for w in &mut widths {
+            let add = slack * *w / total.max(1);
             *w += add;
-            extra -= add;
+        }
+        // Distribute any remainder (from integer division) one-by-one
+        let new_total: usize = widths.iter().sum();
+        let mut leftover = available.saturating_sub(new_total);
+        for w in widths.iter_mut().rev() {
+            if leftover == 0 {
+                break;
+            }
+            *w += 1;
+            leftover -= 1;
         }
     } else {
         // Shrink proportionally
-        let mut to_trim = total - available;
-        for w in widths.iter_mut() {
+        let to_trim = total - available;
+        for w in &mut widths {
             let cut = (to_trim * *w) / total;
-            *w = w.saturating_sub(cut).max(min_w);
-            to_trim = to_trim.saturating_sub(cut);
+            *w = (*w).saturating_sub(cut).max(min_w);
         }
     }
     widths
@@ -140,7 +148,7 @@ pub fn render_decision_summary(s: &DecisionSummary) -> String {
     out.push_str(&sep());
     out.push('\n');
 
-    let kv = |label: &str, value: &str| format!("{V} {:<40} {:>34} {V}\n", label, value);
+    let kv = |label: &str, value: &str| format!("{V} {:<40}{:>34} {V}\n", label, value);
 
     out.push_str(&kv("Files Found", &s.files_found.to_string()));
     out.push_str(&kv("Safe To Clean", &s.safe_to_clean.to_string()));
@@ -347,7 +355,7 @@ pub fn render_simulation(files: &[ClassifiedFile], title: &str) -> String {
 // ── Insight Footer ──
 
 pub fn render_insights(ctx: &InsightContext) -> String {
-    let mut out = sep();
+    let mut out = top();
     out.push('\n');
     out.push_str(&center_row("INSIGHT"));
     out.push_str(&sep());
