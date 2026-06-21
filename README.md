@@ -107,6 +107,12 @@ License: GPL-3.0
 Source: https://github.com/oxyzenQ/zacxiom
 ```
 
+## Intellectual Property
+
+zacxiom is the exclusive intellectual property of **rezky_nightky (oxyzenQ)**.
+This project is not for sale. Source code is provided under GPL-3.0.
+See [docs/trademark.md](docs/trademark.md) for full terms.
+
 ## License
 
 GPL-3.0-only — see [LICENSE](LICENSE)

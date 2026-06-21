@@ -14,14 +14,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
-      - name: Cache cargo registry
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -32,17 +38,24 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-release-
 
       - name: Build release
-        run: cargo build --release
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package binary
+      - name: Package
         run: |
-          mkdir -p release
-          cp target/release/zacxiom release/
-          cp README.md LICENSE RULES.md ARCHITECTURE.md release/
-          cd release && tar czf ../zacxiom-linux-x86_64.tar.gz *
+          ARCHIVE="zacxiom-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/zacxiom dist/
+          cp README.md LICENSE docs/trademark.md dist/
+          cd dist
+          tar czf ../"$ARCHIVE" *
+          cd ..
+          sha512sum "$ARCHIVE" > "$ARCHIVE.sha512sum"
+          echo "archive=$ARCHIVE" >> $GITHUB_ENV
 
-      - name: Upload release artifact
+      - name: Upload release
         uses: softprops/action-gh-release@v2
         with:
-          files: zacxiom-linux-x86_64.tar.gz
+          files: |
+            ${{ env.archive }}
+            ${{ env.archive }}.sha512sum
           generate_release_notes: true
