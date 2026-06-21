@@ -5,7 +5,9 @@
 //!
 //! Principles: clarity over verbosity, structure over logs, insight over output.
 
+use crate::domain::DomainSummary;
 use crate::rules::{ClassifiedFile, Decision};
+use crate::summary::DecisionSummary;
 
 const SEP: &str = "─";
 const WIDE: usize = 78;
@@ -221,6 +223,100 @@ pub fn human_size(bytes: u64) -> String {
         format!("{:.0} {}", size, UNITS[unit_idx])
     } else {
         format!("{:.1} {}", size, UNITS[unit_idx])
+    }
+}
+
+/// Render decision summary — the first thing users see.
+pub fn render_decision_summary(s: &DecisionSummary) -> String {
+    let recov = human_size(s.recoverable_bytes);
+    let total = human_size(s.total_bytes);
+    let mut out = String::new();
+
+    out.push_str(&format!("┌{:─^WIDE$}┐\n", ""));
+    out.push_str(&format!("│ {:^WIDE$} │\n", "DECISION SUMMARY"));
+    out.push_str(&format!("├{:─^WIDE$}├\n", ""));
+    out.push_str(&format!(
+        "│ {:<40} {:>36} │\n",
+        "  Files Found", s.files_found
+    ));
+    out.push_str(&format!(
+        "│ {:<40} {:>36} │\n",
+        "  Safe To Clean", s.safe_to_clean
+    ));
+    if s.low_risk > 0 {
+        out.push_str(&format!(
+            "│ {:<40} {:>36} │\n",
+            "  Low Risk (--smart)", s.low_risk
+        ));
+    }
+    out.push_str(&format!("│ {:<40} {:>36} │\n", "  Blocked", s.blocked));
+    if s.protected > 0 {
+        out.push_str(&format!(
+            "│ {:<40} {:>36} │\n",
+            "  Protected (system)", s.protected
+        ));
+    }
+    out.push_str(&format!(
+        "│ {:<40} {:>36} │\n",
+        "  Recoverable Space", recov
+    ));
+    out.push_str(&format!("│ {:<40} {:>36} │\n", "  Total Scanned", total));
+    out.push_str(&format!("├{:─^WIDE$}├\n", ""));
+    out.push_str(&format!(
+        "│ {:<40} {:>36} │\n",
+        "  Risk Level", s.risk_level
+    ));
+    out.push_str(&format!("└{:─^WIDE$}┘\n", ""));
+    out
+}
+
+/// Render domain summary table — the analytical view.
+pub fn render_domain_summary(domains: &[DomainSummary]) -> String {
+    if domains.is_empty() {
+        return "No cache domains found.\n".to_string();
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("┌{:─^WIDE$}┐\n", ""));
+    out.push_str(&format!("│ {:^WIDE$} │\n", "CACHE DOMAIN SUMMARY"));
+    out.push_str(&format!("├{:─^WIDE$}├\n", ""));
+    out.push_str(&format!(
+        "│ {:<28} {:>7} {:>10} {:>12} {:>15} │\n",
+        "DOMAIN", "FILES", "SIZE", "RISK", "STATUS"
+    ));
+    out.push_str(&format!(
+        "│{:─<28} {:─>7} {:─>10} {:─>12} {:─>15} │\n",
+        "", "", "", "", ""
+    ));
+
+    for d in domains.iter().take(15) {
+        let name = truncate_str(&d.domain, 26);
+        out.push_str(&format!(
+            "│ {:<28} {:>7} {:>10} {:>12} {:>15} │\n",
+            name,
+            d.file_count,
+            human_size(d.total_size),
+            d.risk_label,
+            d.status.label()
+        ));
+    }
+
+    if domains.len() > 15 {
+        out.push_str(&format!(
+            "│ {:>76} │\n",
+            format!("... and {} more domains", domains.len() - 15)
+        ));
+    }
+
+    out.push_str(&format!("└{:─^WIDE$}┘\n", ""));
+    out
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}..", &s[..max - 2])
     }
 }
 

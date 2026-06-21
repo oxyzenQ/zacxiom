@@ -5,12 +5,13 @@
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.
-//! v5.1: UX overhaul — table-first output, error classification, progress engine.
+//! v5.2: Decision Interface — domain summaries, real risk engine, scan vs simulate.
 
 mod cache;
 mod cleaner;
 mod cli;
 mod display;
+mod domain;
 mod errors;
 mod history;
 mod memory;
@@ -25,6 +26,7 @@ mod safety;
 mod scanner;
 mod simulator;
 mod snapshot;
+mod summary;
 
 use clap::Parser;
 use cli::{Cli, Command};
@@ -191,17 +193,18 @@ fn classify(entries: Vec<scanner::ScanEntry>, ctx: &RunContext) -> Vec<rules::Cl
             let d = cache::classify(&e.path);
             let o = ownership::detect(&e.path);
             let path_str = e.path.to_string_lossy().to_string();
-            let mut scored = risk::score_v2(
-                &path_str,
-                e.size,
-                d,
-                o,
-                Some(&ctx.open_files),
-                Some(&ctx.history_cleaned),
-            );
-            // v5: Apply adaptive memory modifier
+            let age = risk::file_age_days(&path_str);
             let modif = ctx.memory.risk_modifier(&path_str);
-            scored.risk_score = (scored.risk_score + modif).clamp(0.0, 1.0);
+            let mut scored = risk::score_v3(&risk::RiskSignals {
+                path: &path_str,
+                size: e.size,
+                domain: &d,
+                ownership: &o,
+                open_files: Some(&ctx.open_files),
+                history_cleaned: Some(&ctx.history_cleaned),
+                memory_modifier: modif,
+                age_days: age,
+            });
             if modif != 0.0 {
                 scored.risk_reasons.push(format!(
                     "memory: adaptive modifier {modif:+.3} (sessions: {})",
@@ -238,25 +241,22 @@ fn run_scan(
         let out = serde_json::json!({
             "health": format!("{:?}", ctx.health),
             "profile": format!("{:?}", ctx.profile),
+            "domains": domain::summarize(&classified),
             "files": classified,
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
-    } else if verbose {
-        println!("\n{}", display::render_table(&classified, "REPORT"));
-        let (safe, low, mod_, high, prot) = count_decisions(&classified);
-        let insight_ctx = display::InsightContext {
-            total: classified.len(),
-            safe,
-            low_risk: low,
-            moderate: mod_,
-            high_risk: high,
-            protected: prot,
-            total_size: classified.iter().map(|f| f.size).sum(),
-            open_files: ctx.open_files.len(),
-        };
-        println!("{}", display::render_insights(&insight_ctx));
-    } else {
-        println!("\n{}", display::render_table(&classified, "SCAN"));
+        return;
+    }
+
+    // SCAN = analytical: domain summary + decision summary
+    let ds = summary::DecisionSummary::from_files(&classified, ctx.open_files.len());
+    println!("\n{}", display::render_decision_summary(&ds));
+
+    let domains = domain::summarize(&classified);
+    println!("{}", display::render_domain_summary(&domains));
+
+    if verbose {
+        println!("{}", display::render_table(&classified, "FILE DETAIL"));
     }
 }
 
@@ -277,20 +277,42 @@ fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
     if json {
         let report = simulator::simulate(&classified, &ctx.health, &ctx.profile);
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
-    } else {
-        println!("\n{}", display::render_simulation(&classified, "DRY RUN"));
-        let (safe, low, mod_, high, prot) = count_decisions(&classified);
-        let insight_ctx = display::InsightContext {
-            total: classified.len(),
-            safe,
-            low_risk: low,
-            moderate: mod_,
-            high_risk: high,
-            protected: prot,
-            total_size: classified.iter().map(|f| f.size).sum(),
-            open_files: ctx.open_files.len(),
-        };
-        println!("{}", display::render_insights(&insight_ctx));
+        return;
+    }
+
+    // SIMULATE = operational: what would happen if I clean now
+    let ds = summary::DecisionSummary::from_files(&classified, ctx.open_files.len());
+    println!("\n{}", display::render_decision_summary(&ds));
+
+    // Show what's safe + what's blocked with action labels
+    println!(
+        "{}",
+        display::render_simulation(&classified, "DRY RUN — What Would Happen")
+    );
+
+    // Insight footer
+    let (safe, low, mod_, high, prot) = count_decisions(&classified);
+    let insight_ctx = display::InsightContext {
+        total: classified.len(),
+        safe,
+        low_risk: low,
+        moderate: mod_,
+        high_risk: high,
+        protected: prot,
+        total_size: classified.iter().map(|f| f.size).sum(),
+        open_files: ctx.open_files.len(),
+    };
+    println!("{}", display::render_insights(&insight_ctx));
+
+    // Rollback availability
+    let snaps = snapshot::Snapshot::list_all();
+    if !snaps.is_empty() {
+        println!(
+            "  ⚡ Rollback: {} snapshot(s) available ({})",
+            snaps.len(),
+            snaps.last().unwrap()
+        );
+        println!("     Use 'zacxiom undo' to restore.\n");
     }
 }
 
@@ -309,8 +331,10 @@ fn run_clean(
 
     let _sim = simulator::simulate(&classified, &ctx.health, &ctx.profile);
     if !json {
+        let ds = summary::DecisionSummary::from_files(&classified, ctx.open_files.len());
+        println!("\n{}", display::render_decision_summary(&ds));
         println!(
-            "\n{}",
+            "{}",
             display::render_simulation(&classified, "BEFORE CLEAN")
         );
         let (safe, low, mod_, high, prot) = count_decisions(&classified);

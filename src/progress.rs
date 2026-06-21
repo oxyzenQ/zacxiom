@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_phase_sequence() {
-        let phases = vec![
+        let phases = [
             Phase::Scan,
             Phase::Analyze,
             Phase::Classify,

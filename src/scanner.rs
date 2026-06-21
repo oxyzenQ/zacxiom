@@ -119,7 +119,7 @@ mod tests {
     fn test_scan_respects_min_size() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("small.txt"), b"x").unwrap();
-        fs::write(tmp.path().join("big.txt"), &[0u8; 100]).unwrap();
+        fs::write(tmp.path().join("big.txt"), [0u8; 100]).unwrap();
 
         let entries = scan(&[tmp.path().to_path_buf()], 0, 50, false);
         assert_eq!(entries.len(), 1);
