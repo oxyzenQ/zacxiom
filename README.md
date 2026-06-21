@@ -1,13 +1,23 @@
-# zacxiom
+<p align="center">
+  <img src="assets/zacxiom-logo-master.png" alt="Zylaxion logo" width="260">
+</p>
 
-Filesystem intelligence for Linux.
+<h1 align="center">zacxiom</h1>
 
-Observe → Understand → Decide → Act
+<p align="center">
+  <strong>Filesystem intelligence for Linux. Observe → Understand → Decide → Act<strong>
+</p>
 
+<p align="center">
 Safe-by-default filesystem intelligence engine that evaluates risk, explains decisions, and reclaims space only when it is safe to do so.
 
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-rezky-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/rezky)
+</p>
 
+<p align="center">
+  <a href="https://ko-fi.com/rezky">
+    <img src="https://img.shields.io/badge/Ko--fi-support-7C3AED?style=flat-square&logo=kofi&logoColor=white&labelColor=111827" alt="Support on Ko-fi">
+  </a>
+</p>
 
 ---
 
