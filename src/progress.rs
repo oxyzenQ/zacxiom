@@ -109,6 +109,16 @@ impl Progress {
         );
         println!(); // blank line before output begins
     }
+
+    /// Update status text during a phase (v6.2.1: live counters).
+    /// Use during long-running phases to prevent "frozen" perception.
+    pub fn status(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
+        print!("{}  ⠋ [{:5}] {:<22}", CLEAR, self.phase.label(), msg,);
+        io::stdout().flush().ok();
+    }
 }
 
 #[cfg(test)]

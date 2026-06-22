@@ -86,15 +86,25 @@ pub enum Command {
         /// Preview only — show what WOULD be cleaned without deleting
         #[arg(long)]
         dry_run: bool,
+        /// Show individual file list (default: summary only)
+        #[arg(long)]
+        verbose: bool,
         #[arg(long)]
         json: bool,
     },
 
     /// Explain why a file or domain is safe/risky (★★★★★ trust cards)
+    ///
+    /// Usage: zacxiom explain ~/.cargo
+    ///        zacxiom explain --path ~/.rustup
     Explain {
-        /// File path or domain name to explain
+        /// File path or domain name to explain (positional)
+        #[arg(default_value = "")]
+        target: String,
+
+        /// File path or domain name (named flag)
         #[arg(short, long)]
-        path: String,
+        path: Option<String>,
     },
 
     CheckUpdate,

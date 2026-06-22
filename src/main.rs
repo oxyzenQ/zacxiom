@@ -123,10 +123,19 @@ fn main() {
             smart,
             force,
             dry_run,
+            verbose,
             json,
-        } => run_clean(paths, depth, smart, force, dry_run, json, &profile),
+        } => run_clean(paths, depth, smart, force, dry_run, verbose, json, &profile),
 
-        Command::Explain { path } => run_explain(&path),
+        Command::Explain { target, path } => {
+            let target_path = path.as_deref().unwrap_or(&target);
+            if target_path.is_empty() {
+                eprintln!("Usage: zacxiom explain <path>");
+                eprintln!("       zacxiom explain --path <path>");
+                std::process::exit(1);
+            }
+            run_explain(target_path);
+        }
 
         Command::CheckUpdate => check_update(),
         Command::Undo { id } => run_undo(id),
@@ -421,12 +430,14 @@ fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
     println!("{}", display::render_simulation(&classified, "SIMULATION"));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_clean(
     paths: Vec<String>,
     depth: usize,
     smart: bool,
     force: bool,
     dry_run: bool,
+    verbose: bool,
     json: bool,
     profile: &str,
 ) {
@@ -479,59 +490,99 @@ fn run_clean(
                 }
             )
         );
+
+        // Space accounting: safe vs review vs total
+        let owned_cleanable: Vec<rules::ClassifiedFile> =
+            cleanable.iter().map(|f| (*f).clone()).collect();
+        let cs = confidence::ConfidenceSummary::from_files(&owned_cleanable);
+
+        let safe_size: u64 = owned_cleanable
+            .iter()
+            .filter(|f| matches!(confidence::confidence(f), confidence::Tier::Maximum))
+            .map(|f| f.size)
+            .sum();
+        let review_size: u64 = owned_cleanable
+            .iter()
+            .filter(|f| {
+                matches!(
+                    confidence::confidence(f),
+                    confidence::Tier::High | confidence::Tier::Moderate
+                )
+            })
+            .map(|f| f.size)
+            .sum();
+
         println!(
-            "║  Would clean:  {:>5} files ({:<33}) ║",
+            "║  Safe (★★★★★):  {:<41} ║",
+            format!(
+                "{} files ({})",
+                cs.maximum,
+                simulator::human_size(safe_size)
+            )
+        );
+        println!(
+            "║  Review (★★★+):  {:<40} ║",
+            format!(
+                "{} files ({})",
+                cs.high + cs.moderate,
+                simulator::human_size(review_size)
+            )
+        );
+        println!(
+            "║  Total:         {:>5} files ({:<33}) ║",
             cleanable.len(),
             simulator::human_size(to_clean_size)
         );
         println!(
-            "║  Would skip:   {:>5} files ({:<33}) ║",
+            "║  Would skip:    {:>5} files ({:<33}) ║",
             skipped.len(),
             simulator::human_size(skipped_size)
         );
         println!("╚══════════════════════════════════════════════════════════╝");
 
-        // Confidence breakdown of what would be cleaned
-        let owned_cleanable: Vec<rules::ClassifiedFile> =
-            cleanable.iter().map(|&f| f.clone()).collect();
-        let cs = confidence::ConfidenceSummary::from_files(&owned_cleanable);
-        println!(
-            "\n  ★★★★★ Maximum Safety:  {} files ({})",
-            cs.maximum,
-            simulator::human_size(
-                cleanable
-                    .iter()
-                    .filter(|f| matches!(confidence::confidence(f), confidence::Tier::Maximum))
-                    .map(|f| f.size)
-                    .sum()
-            )
-        );
-        println!(
-            "  ★★★★  High Safety:     {} files ({})",
-            cs.high,
-            simulator::human_size(
-                cleanable
-                    .iter()
-                    .filter(|f| matches!(confidence::confidence(f), confidence::Tier::High))
-                    .map(|f| f.size)
-                    .sum()
-            )
-        );
-        println!(
-            "  ★★★   Review Rec:      {} files ({})",
-            cs.moderate,
-            simulator::human_size(
-                cleanable
-                    .iter()
-                    .filter(|f| matches!(confidence::confidence(f), confidence::Tier::Moderate))
-                    .map(|f| f.size)
-                    .sum()
-            )
-        );
+        // Domain breakdown (summary-first)
+        let domains = domain::summarize(&owned_cleanable);
+        if !domains.is_empty() {
+            println!("\n  ── WOULD CLEAN BY DOMAIN ──\n");
+            for d in domains.iter().take(10) {
+                let tier = if d.risk_score < 0.15 {
+                    confidence::Tier::Maximum
+                } else if d.risk_score < 0.35 {
+                    confidence::Tier::High
+                } else {
+                    confidence::Tier::Moderate
+                };
+                println!(
+                    "  {} {:<35} {:>5} files  {}",
+                    tier.stars(),
+                    d.domain,
+                    d.file_count,
+                    simulator::human_size(d.total_size)
+                );
+            }
+            if domains.len() > 10 {
+                println!("  ... and {} more domains", domains.len() - 10);
+            }
+        }
 
-        if !cleanable.is_empty() {
-            println!("\n  Would clean:\n");
-            for f in cleanable.iter().take(20) {
+        // Top contributors (v6.2.1)
+        let top = top_contributors(&owned_cleanable, 8);
+        if !top.is_empty() {
+            println!("\n  ── TOP CONTRIBUTORS ──\n");
+            for (name, count, size) in &top {
+                println!(
+                    "  {:<40} {:>4} files  {}",
+                    name,
+                    count,
+                    simulator::human_size(*size)
+                );
+            }
+        }
+
+        // File list only with --verbose
+        if verbose && !cleanable.is_empty() {
+            println!("\n  ── FILES ──\n");
+            for f in cleanable.iter().take(50) {
                 let tier = confidence::confidence(f);
                 println!(
                     "  {} {}  {}",
@@ -540,9 +591,11 @@ fn run_clean(
                     f.path
                 );
             }
-            if cleanable.len() > 20 {
-                println!("  ... and {} more files", cleanable.len() - 20);
+            if cleanable.len() > 50 {
+                println!("  ... and {} more files", cleanable.len() - 50);
             }
+        } else if !cleanable.is_empty() && !verbose {
+            println!("\n  Use --verbose to see individual file list");
         }
         return;
     }
@@ -752,4 +805,158 @@ fn chrono_now() -> String {
         mo += 1;
     }
     format!("{y:04}-{mo:02}-{:02}T{h:02}:{m:02}:{s:02}Z", rem + 1)
+}
+
+/// Extract top storage contributors from classified files (v6.2.1).
+/// Groups by path prefix patterns to show "where storage is going".
+fn top_contributors(files: &[rules::ClassifiedFile], limit: usize) -> Vec<(String, usize, u64)> {
+    use std::collections::HashMap;
+
+    // Group by path-derived contributor name
+    let mut groups: HashMap<String, (usize, u64)> = HashMap::new();
+
+    for f in files {
+        let name = contributor_name(&f.path);
+        let entry = groups.entry(name).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 += f.size;
+    }
+
+    let mut sorted: Vec<(String, usize, u64)> =
+        groups.into_iter().map(|(k, (c, s))| (k, c, s)).collect();
+    sorted.sort_by_key(|(_, _, s)| std::cmp::Reverse(*s));
+    sorted.truncate(limit);
+    sorted
+}
+
+/// Derive a human-readable contributor name from a file path.
+fn contributor_name(path: &str) -> String {
+    let lower = path.to_lowercase();
+
+    // Browser-specific
+    if lower.contains("firefox") || lower.contains("mozilla") {
+        return "Firefox".into();
+    }
+    if lower.contains("chromium") {
+        return "Chromium".into();
+    }
+    if lower.contains("chrome") {
+        return "Google Chrome".into();
+    }
+    if lower.contains("brave") {
+        return "Brave".into();
+    }
+    if lower.contains("edge") {
+        return "Microsoft Edge".into();
+    }
+
+    // Developer tools
+    if lower.contains(".cargo") {
+        return "Cargo (Rust)".into();
+    }
+    if lower.contains("rustup") {
+        return "Rustup".into();
+    }
+    if lower.contains(".npm") || lower.contains("npm") {
+        return "npm".into();
+    }
+    if lower.contains("pnpm") {
+        return "pnpm".into();
+    }
+    if lower.contains("yarn") {
+        return "Yarn".into();
+    }
+    if lower.contains("pip") {
+        return "pip (Python)".into();
+    }
+    if lower.contains("/uv/") || lower.contains(".cache/uv") {
+        return "uv (Python)".into();
+    }
+    if lower.contains("docker") || lower.contains("containers") {
+        return "Docker".into();
+    }
+    if lower.contains("gradle") {
+        return "Gradle".into();
+    }
+    if lower.contains("maven") || lower.contains(".m2") {
+        return "Maven".into();
+    }
+    if lower.contains("node_modules") {
+        return "Node.js (node_modules)".into();
+    }
+
+    // Gaming
+    if lower.contains("steam") {
+        return "Steam".into();
+    }
+    if lower.contains("lutris") {
+        return "Lutris".into();
+    }
+    if lower.contains("heroic") {
+        return "Heroic".into();
+    }
+    if lower.contains("compatdata") || lower.contains("proton") {
+        return "Proton (Steam)".into();
+    }
+    if lower.contains("dxvk") || lower.contains("vkd3d") || lower.contains("mesa") {
+        return "Shader Cache".into();
+    }
+
+    // Desktop apps
+    if lower.contains("discord") {
+        return "Discord".into();
+    }
+    if lower.contains("spotify") {
+        return "Spotify".into();
+    }
+    if lower.contains("slack") {
+        return "Slack".into();
+    }
+    if lower.contains("vscode") || lower.contains("visual studio") {
+        return "VS Code".into();
+    }
+    if lower.contains("jetbrains") || lower.contains("intellij") {
+        return "JetBrains IDE".into();
+    }
+    if lower.contains("thunderbird") {
+        return "Thunderbird".into();
+    }
+
+    // AI/ML
+    if lower.contains("huggingface") {
+        return "HuggingFace".into();
+    }
+    if lower.contains("ollama") {
+        return "Ollama".into();
+    }
+    if lower.contains("torch") || lower.contains("pytorch") {
+        return "PyTorch".into();
+    }
+
+    // System
+    if lower.contains("/tmp/") {
+        return "Temporary Files".into();
+    }
+    if lower.contains("trash") {
+        return "Desktop Trash".into();
+    }
+    if lower.contains("downloads") {
+        return "Downloads".into();
+    }
+    if lower.contains("pacman") || lower.contains("yay") || lower.contains("paru") {
+        return "Package Manager".into();
+    }
+
+    // Fallback: extract app name from path
+    path.split('/')
+        .find(|p| p.contains(".cache") || p.contains(".config") || p.contains(".local"))
+        .map(|s| {
+            let parts: Vec<&str> = s.split('/').collect();
+            if parts.len() >= 2 {
+                parts[parts.len() - 1].to_string()
+            } else {
+                s.to_string()
+            }
+        })
+        .unwrap_or_else(|| "Other".into())
 }
