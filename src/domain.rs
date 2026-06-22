@@ -155,6 +155,10 @@ fn domain_key(domain: &CacheDomain, path: &str) -> String {
                 "Mesa Shader Cache"
             } else if path.contains("/tmp/") {
                 "Temporary Files"
+            } else if path.contains("dxvk") || path.contains("vkd3d") {
+                "DXVK/VKD3D Shader Cache"
+            } else if path.contains("steam") && path.contains("shadercache") {
+                "Steam Shader Cache"
             } else {
                 "System Cache"
             }
@@ -162,21 +166,47 @@ fn domain_key(domain: &CacheDomain, path: &str) -> String {
         CacheDomain::PackageManager => "Package Manager Cache",
         CacheDomain::Developer => {
             if path.contains(".cargo") {
-                "Cargo Registry"
-            } else if path.contains(".npm") || path.contains("yarn") {
-                "NPM/Yarn Cache"
+                "Cargo Registry & Build Cache"
+            } else if path.contains("rustup") {
+                "Rustup Toolchains"
+            } else if path.contains(".npm") || path.contains("yarn") || path.contains("pnpm") {
+                "JavaScript Package Cache"
+            } else if path.contains("pip") || path.contains("uv") {
+                "Python Package Cache"
             } else if path.contains(".m2") {
-                "Maven Cache"
-            } else if path.contains("pip") {
-                "Pip Cache"
+                "Maven Repository Cache"
+            } else if path.contains("docker") || path.contains("containers") {
+                "Docker/Container Cache"
+            } else if path.contains("huggingface")
+                || path.contains("ollama")
+                || path.contains("torch")
+                || path.contains("modelscope")
+            {
+                "AI/ML Model Cache"
             } else {
                 "Developer Cache"
             }
         }
-        CacheDomain::UserData => "User Cache",
+        CacheDomain::UserData => {
+            if path.contains("trash") {
+                "Desktop Trash"
+            } else if path.contains("compatdata") {
+                "Proton/Steam Compat Data"
+            } else if path.contains("lutris") || path.contains("heroic") {
+                "Gaming Runner Cache"
+            } else if path.contains("thumbnails") {
+                "Thumbnail Cache"
+            } else if path.contains("thunderbird") {
+                "Email Client Cache"
+            } else {
+                "User Cache"
+            }
+        }
         CacheDomain::Unknown => {
             if path.contains("mesa") || path.contains("shader") {
                 "Mesa Shader Cache"
+            } else if path.contains("downloads") {
+                "Downloads Directory"
             } else {
                 "Application Cache"
             }

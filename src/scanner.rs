@@ -75,12 +75,29 @@ pub fn default_scan_roots() -> Vec<PathBuf> {
     let mut roots = vec![];
 
     if let Some(ref h) = home {
+        // Developer caches — the biggest consumers on dev workstations
+        roots.push(h.join(".cargo"));
+        roots.push(h.join(".rustup"));
+        roots.push(h.join(".npm"));
+        roots.push(h.join(".docker"));
+        roots.push(h.join(".gradle"));
+        roots.push(h.join(".m2/repository"));
+
+        // General cache & desktop
         roots.push(h.join(".cache"));
         roots.push(h.join(".local/share/Trash"));
+        roots.push(h.join("Downloads"));
+
+        // Gaming
+        roots.push(h.join(".steam"));
+        roots.push(h.join(".local/share/Steam"));
+        roots.push(h.join(".var/app")); // Flatpak
+        roots.push(h.join("snap"));
     }
 
     // system caches (readable by user)
     roots.push(PathBuf::from("/var/cache"));
+    roots.push(PathBuf::from("/var/lib/docker"));
     roots.push(PathBuf::from("/tmp"));
 
     roots
