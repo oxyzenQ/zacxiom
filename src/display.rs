@@ -7,6 +7,7 @@
 //! Falls back to $COLUMNS env var, then 80 columns.
 //! Minimum: 60 columns. All tables scale to available width.
 
+use crate::confidence::ConfidenceSummary;
 use crate::domain::DomainSummary;
 use crate::rules::{ClassifiedFile, Decision};
 use crate::summary::DecisionSummary;
@@ -367,6 +368,70 @@ pub fn render_simulation(files: &[ClassifiedFile], title: &str) -> String {
 
     out.push_str(&bot(w));
     out.push('\n');
+    out
+}
+
+// ── Confidence Summary (v6.2.0) ──
+
+pub fn render_confidence_summary(cs: &ConfidenceSummary) -> String {
+    let _w = term_width();
+    let mut out = String::new();
+    out.push_str(&format!("\n┌{:─^78}┐\n", " CONFIDENCE BREAKDOWN "));
+
+    let total = cs.total.max(1) as f64;
+    let bar = |count: usize, total: f64| -> String {
+        if count == 0 {
+            return "".into();
+        }
+        let pct = count as f64 / total * 100.0;
+        let blocks = (pct / 5.0).ceil() as usize;
+        format!("{} {} ({:.0}%)", "█".repeat(blocks.min(20)), count, pct)
+    };
+
+    if cs.maximum > 0 {
+        out.push_str(&format!(
+            "│ ★★★★★ Maximum Safety    {:<48} │\n",
+            bar(cs.maximum, total)
+        ));
+    }
+    if cs.high > 0 {
+        out.push_str(&format!(
+            "│ ★★★★  High Safety        {:<48} │\n",
+            bar(cs.high, total)
+        ));
+    }
+    if cs.moderate > 0 {
+        out.push_str(&format!(
+            "│ ★★★   Review Recommended {:<48} │\n",
+            bar(cs.moderate, total)
+        ));
+    }
+    if cs.low > 0 {
+        out.push_str(&format!(
+            "│ ★★    Caution            {:<48} │\n",
+            bar(cs.low, total)
+        ));
+    }
+    if cs.minimal > 0 {
+        out.push_str(&format!(
+            "│ ★     Manual Review      {:<48} │\n",
+            bar(cs.minimal, total)
+        ));
+    }
+    if cs.protected > 0 {
+        out.push_str(&format!(
+            "│ ⛔     Protected           {:<48} │\n",
+            bar(cs.protected, total)
+        ));
+    }
+
+    out.push_str(&format!("├{:─^78}┤\n", ""));
+    out.push_str(&format!(
+        "│ Default clean (safe):    {} files │ Clean with --smart:  {} files │\n",
+        cs.cleanable_default(),
+        cs.cleanable_smart()
+    ));
+    out.push_str(&format!("└{:─^78}┘\n", ""));
     out
 }
 

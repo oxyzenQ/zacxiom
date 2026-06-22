@@ -1,0 +1,200 @@
+// Copyright (C) 2026 rezky_nightky
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Explainability engine — domain-specific 5-question cards.
+//!
+//! Every recommendation answers: What? Why safe? What if deleted?
+//! How much? Can I undo it? No AI. Deterministic by domain.
+
+use crate::confidence::{confidence, Tier};
+use crate::rules::ClassifiedFile;
+use crate::simulator::human_size;
+
+/// A full explainability card for a file or domain.
+pub struct Explanation {
+    pub title: String,
+    pub what: String,
+    pub why_safe: String,
+    pub consequence: String,
+    pub storage: String,
+    pub tier: Tier,
+    pub recommendation: String,
+}
+
+/// Generate a domain-level explanation (for summary displays).
+pub fn explain_domain(domain: &str, total_size: u64, tier: Tier, file_count: usize) -> Explanation {
+    let (what, why, consequence) = match domain {
+        d if d.contains("Cargo") => (
+            "Downloaded Rust crate files used by Cargo for building projects.".into(),
+            "Cargo automatically re-downloads missing crates on the next `cargo build`. You will never lose code or data.".to_string(),
+            "Future builds may spend 2-5 minutes downloading crates. No data loss.".into(),
+        ),
+        d if d.contains("Docker") || d.contains("Container") => (
+            "Docker image layers, build cache, and container storage.".into(),
+            "Docker rebuilds images from Dockerfiles. Running containers are NOT affected — only unused layers are targeted.".into(),
+            "Next `docker build` will rebuild layers from cache or Dockerfile. Running containers continue normally.".into(),
+        ),
+        d if d.contains("npm") || d.contains("yarn") || d.contains("pnpm") || d.contains("JavaScript") => (
+            "Cached JavaScript packages downloaded by npm, yarn, or pnpm.".into(),
+            "Package managers re-download from the npm registry on `npm install`. This is a network cache, not your project code.".to_string(),
+            "Next `npm install` may take longer while packages re-download. No project data lost.".into(),
+        ),
+        d if d.contains("pip") || d.contains("uv") || d.contains("Python") => (
+            "Downloaded Python packages cached by pip or uv.".into(),
+            "pip/uv re-downloads packages from PyPI. Your virtual environments and installed packages are separate.".to_string(),
+            "Next `pip install` may take longer. Virtual environments are unaffected.".into(),
+        ),
+        d if d.contains("Rust") && d.contains("Build") => (
+            "Compiled build output from `cargo build`. The `target/` directory.".into(),
+            "`cargo build` regenerates all build artifacts. Source code and Cargo.toml are not affected.".into(),
+            "Next `cargo build` will recompile. Source code is safe.".into(),
+        ),
+        d if d.contains("Rustup") || d.contains("Toolchain") => (
+            "Rust toolchain components downloaded by rustup.".into(),
+            "rustup re-downloads toolchains on `rustup update`. Only old/unused versions are targeted.".into(),
+            "Version-specific builds may need the toolchain re-downloaded. Your active toolchain is unaffected.".into(),
+        ),
+        d if d.contains("AI") || d.contains("ML") || d.contains("Model") => (
+            "Downloaded AI/ML model files (HuggingFace, Ollama, Torch).".into(),
+            "Models can be re-downloaded from HuggingFace/Ollama. Checkpoints may have training value — review before deleting.".to_string(),
+            "Models will re-download when needed. Training checkpoints are permanently deleted — review carefully.".into(),
+        ),
+        d if d.contains("Proton") || d.contains("Compat") => (
+            "Proton/Wine compatibility data for Steam games (Windows emulation layer).".into(),
+            "Steam reinstalls Proton prefixes when launching games. Game saves are typically in Steam Cloud or separate directories.".into(),
+            "Games may take longer to launch first time while Proton re-creates the prefix. Game saves should be unaffected.".into(),
+        ),
+        d if d.contains("Steam") && d.contains("Shader") => (
+            "Pre-compiled GPU shader cache for Steam games.".into(),
+            "Shaders regenerate automatically when the game launches. No game data or saves affected.".into(),
+            "Games may have slightly lower FPS for the first few minutes while shaders recompile.".into(),
+        ),
+        d if d.contains("DXVK") || d.contains("VKD3D") => (
+            "DirectX-to-Vulkan translation shader cache.".into(),
+            "Regenerated automatically on next game launch. GPU drivers rebuild these caches.".into(),
+            "Temporary performance dip until shaders recompile — typically 1-5 minutes of gameplay.".into(),
+        ),
+        d if d.contains("Mesa") => (
+            "OpenGL/Vulkan shader cache maintained by Mesa graphics drivers.".into(),
+            "Automatically regenerated by the GPU driver. This is a performance cache, not user data.".into(),
+            "Applications may have a brief stutter while shaders recompile. Typically 1-2 minutes.".into(),
+        ),
+        d if d.contains("Trash") => (
+            "Files you've already deleted — they're in the Trash directory.".into(),
+            "You already chose to delete these files. The Trash is a safety net, not permanent storage.".into(),
+            "Files will be permanently removed. You can restore them before cleaning from your file manager.".into(),
+        ),
+        d if d.contains("Browser") => (
+            "Browser cache, temporary internet files, and service worker storage.".into(),
+            "Browsers rebuild their cache automatically as you browse. No bookmarks, passwords, or settings are affected.".into(),
+            "Websites may load slightly slower on first visit until the cache rebuilds. No data loss.".into(),
+        ),
+        d if d.contains("Package Manager") || d.contains("APT") || d.contains("Pacman") => (
+            "Downloaded system packages cached by the package manager.".into(),
+            "The package manager re-downloads packages when needed. Installed software is NOT affected.".to_string(),
+            "Future system updates may take longer while packages re-download. Installed packages are safe.".into(),
+        ),
+        d if d.contains("Download") => (
+            "Files in your Downloads directory that haven't been accessed recently.".into(),
+            "These are files you downloaded. Review before deleting — you may still need them. Old ISOs and installers are usually safe to remove.".into(),
+            "Files will be permanently deleted. Review the list carefully — downloads may contain important documents.".into(),
+        ),
+        _ => (
+            "Cached or temporary data that can be regenerated.".into(),
+            "These files appear to be cache data. No user documents or settings are included.".to_string(),
+            "Applications may need to regenerate this data on next use. User files are not affected.".into(),
+        ),
+    };
+
+    Explanation {
+        title: domain.to_string(),
+        what,
+        why_safe: why,
+        consequence,
+        storage: format!("{} across {} files", human_size(total_size), file_count),
+        tier,
+        recommendation: match tier {
+            Tier::Maximum => "Safe to clean. Run: zacxiom clean".into(),
+            Tier::High => "Safe with --smart. Run: zacxiom clean --smart".into(),
+            Tier::Moderate => "Review recommended. Run: zacxiom clean --force after review".into(),
+            Tier::Low | Tier::Minimal => "Manual review required. Do NOT auto-clean.".into(),
+            Tier::Protected => "Will never be cleaned by Zacxiom.".into(),
+        },
+    }
+}
+
+/// Generate a file-level explanation.
+pub fn explain_file(file: &ClassifiedFile) -> Explanation {
+    let tier = confidence(file);
+
+    let what = match file.cache_domain {
+        crate::rules::CacheDomain::Browser => "Browser cache entry".into(),
+        crate::rules::CacheDomain::BuildArtifact => "Build artifact or dependency".into(),
+        crate::rules::CacheDomain::PackageManager => "Package manager cache".into(),
+        crate::rules::CacheDomain::Developer => "Developer tooling cache".into(),
+        crate::rules::CacheDomain::System => "System cache file".into(),
+        crate::rules::CacheDomain::UserData => "User cache data".into(),
+        crate::rules::CacheDomain::Unknown => "Unclassified file".into(),
+    };
+
+    let reason_str: String = if file.risk_reasons.is_empty() {
+        "none".to_string()
+    } else {
+        file.risk_reasons.join("; ")
+    };
+    let why = format!(
+        "Risk score: {:.2}. Reasons: {}",
+        file.risk_score, reason_str
+    );
+
+    Explanation {
+        title: file.path.clone(),
+        what,
+        why_safe: why,
+        consequence: match tier {
+            Tier::Maximum => "Can be regenerated automatically. No data loss.".into(),
+            Tier::High => "May require time to regenerate. No user data affected.".into(),
+            Tier::Moderate => "Probably safe but review the risk reasons above.".into(),
+            Tier::Low => "May contain valuable data. Manual review strongly recommended.".into(),
+            Tier::Minimal => "Potentially important. Do not delete without careful review.".into(),
+            Tier::Protected => "System or user-critical file. Never deleted by Zacxiom.".into(),
+        },
+        storage: human_size(file.size),
+        tier,
+        recommendation: match tier {
+            Tier::Maximum => "Safe to delete".into(),
+            Tier::High => "Safe with --smart".into(),
+            Tier::Moderate => "Review before deleting".into(),
+            Tier::Low | Tier::Minimal => "Do not auto-delete".into(),
+            Tier::Protected => "Will never be deleted".into(),
+        },
+    }
+}
+
+/// Render an explanation as a formatted text card.
+pub fn render_card(exp: &Explanation) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "\n┌{:─^60}┐\n",
+        format!(" {} {} ", exp.tier.stars(), exp.title)
+    ));
+    out.push_str(&format!("│ {:<58} │\n", format!("WHAT: {}", exp.what)));
+    out.push_str(&format!(
+        "│ {:<58} │\n",
+        format!("WHY SAFE: {}", exp.why_safe)
+    ));
+    out.push_str(&format!(
+        "│ {:<58} │\n",
+        format!("IF DELETED: {}", exp.consequence)
+    ));
+    out.push_str(&format!(
+        "│ {:<58} │\n",
+        format!("STORAGE: {}", exp.storage)
+    ));
+    out.push_str(&format!(
+        "│ {:<58} │\n",
+        format!("RECOMMEND: {}", exp.recommendation)
+    ));
+    out.push_str(&format!("└{:─^60}┘\n", ""));
+    out
+}

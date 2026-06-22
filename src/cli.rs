@@ -3,19 +3,17 @@
 
 //! CLI definitions using clap derive.
 //!
-//! Commands: scan, report, simulate, clean, check-update
-//! Flags: --smart, --force, --json, --depth, --min-size
+//! v6.2.0: added `explain` command and `--dry-run` flag.
 
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
     name = "zacxiom",
-    version, // overridden by custom --version in main()
+    version,
     about = "Filesystem Intelligence Engine — Observe → Understand → Decide → Act",
     long_about = "Safe-by-default filesystem cleanup with full explainability.\n\
-                  Every decision is justified. Every action is logged.\n\
-                  Run `simulate` before `clean` — always.",
+                  Every decision is justified. Every action is logged.",
     disable_version_flag = true
 )]
 pub struct Cli {
@@ -35,102 +33,74 @@ pub struct Cli {
 pub enum Command {
     /// Scan filesystem for cache files and classify them
     Scan {
-        /// Root paths to scan (default: ~/.cache, /var/cache, /tmp)
         #[arg(short, long, num_args = 0..)]
         paths: Vec<String>,
-
-        /// Maximum directory depth (0 = unlimited)
         #[arg(short, long, default_value = "0")]
         depth: usize,
-
-        /// Minimum file size in bytes
         #[arg(short = 'm', long, default_value = "1")]
         min_size: u64,
-
-        /// Profile: minimal, dev, gaming, server
         #[arg(short = 'p', long, default_value = "dev")]
         profile: String,
-
-        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
 
-    /// Show full classified report (alias: scan with verbose)
+    /// Show full classified report
     Report {
-        /// Root paths to scan
         #[arg(short, long, num_args = 0..)]
         paths: Vec<String>,
-
-        /// Maximum directory depth (0 = unlimited)
         #[arg(short, long, default_value = "0")]
         depth: usize,
-
-        /// Profile: minimal, dev, gaming, server
         #[arg(short = 'p', long, default_value = "dev")]
         profile: String,
-
-        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
 
-    /// Dry-run simulation — see what WOULD happen (MANDATORY before clean)
+    /// Dry-run simulation — see what WOULD happen
     Simulate {
-        /// Root paths to scan
         #[arg(short, long, num_args = 0..)]
         paths: Vec<String>,
-
-        /// Maximum directory depth (0 = unlimited)
         #[arg(short, long, default_value = "0")]
         depth: usize,
-
-        /// Profile: minimal, dev, gaming, server
         #[arg(short = 'p', long, default_value = "dev")]
         profile: String,
-
-        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
 
     /// Execute safe clean (only SAFE files unless --smart/--force)
     Clean {
-        /// Root paths to scan
         #[arg(short, long, num_args = 0..)]
         paths: Vec<String>,
-
-        /// Maximum directory depth (0 = unlimited)
         #[arg(short, long, default_value = "0")]
         depth: usize,
-
-        /// Profile: minimal, dev, gaming, server
         #[arg(short = 'p', long, default_value = "dev")]
         profile: String,
-
         /// Also clean LOW_RISK files
         #[arg(long)]
         smart: bool,
-
-        /// Also clean MODERATE files (requires confirmation)
+        /// Also clean MODERATE files
         #[arg(long)]
         force: bool,
-
-        /// Output as JSON
+        /// Preview only — show what WOULD be cleaned without deleting
+        #[arg(long)]
+        dry_run: bool,
         #[arg(long)]
         json: bool,
     },
 
-    /// Check for latest upstream release on GitHub
-    CheckUpdate,
+    /// Explain why a file or domain is safe/risky (★★★★★ trust cards)
+    Explain {
+        /// File path or domain name to explain
+        #[arg(short, long)]
+        path: String,
+    },
 
-    /// Undo last clean operation from snapshot
+    CheckUpdate,
     Undo {
-        /// Snapshot ID to restore (omit for latest)
         #[arg(short, long)]
         id: Option<String>,
     },
-
-    /// Show system status: health, history, snapshots
     Status,
 }

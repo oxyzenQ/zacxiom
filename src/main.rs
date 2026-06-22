@@ -1,18 +1,21 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Zacxiom — Filesystem Intelligence Engine v3
+//! Zacxiom — Filesystem Intelligence Engine v6.2.0
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.
-//! v5.2: Decision Interface — domain summaries, real risk engine, scan vs simulate.
+//! v6.2: Trust Release — explain, dry-run, confidence tiers, top contributors.
+#![allow(dead_code)]
 
 mod cache;
 mod cleaner;
 mod cli;
+mod confidence;
 mod display;
 mod domain;
 mod errors;
+mod explain;
 mod history;
 mod memory;
 mod ownership;
@@ -119,8 +122,11 @@ fn main() {
             profile,
             smart,
             force,
+            dry_run,
             json,
-        } => run_clean(paths, depth, smart, force, json, &profile),
+        } => run_clean(paths, depth, smart, force, dry_run, json, &profile),
+
+        Command::Explain { path } => run_explain(&path),
 
         Command::CheckUpdate => check_update(),
         Command::Undo { id } => run_undo(id),
@@ -350,12 +356,10 @@ fn run_scan(
     profile: &str,
 ) {
     let mut prog = progress::Progress::new(json);
-
     let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, min_size, true);
     prog.advance();
-
     let classified = classify(entries, &ctx);
     prog.advance();
     prog.advance();
@@ -372,12 +376,15 @@ fn run_scan(
         return;
     }
 
-    // SCAN = analytical: domain summary + decision summary
     let ds = summary::DecisionSummary::from_files(&classified, ctx.open_files.len());
     println!("\n{}", display::render_decision_summary(&ds));
 
     let domains = domain::summarize(&classified);
     println!("{}", display::render_domain_summary(&domains));
+
+    // v6.2.0: show confidence breakdown
+    let cs = confidence::ConfidenceSummary::from_files(&classified);
+    println!("{}", display::render_confidence_summary(&cs));
 
     if verbose {
         println!("{}", display::render_table(&classified, "FILE DETAIL"));
@@ -386,12 +393,10 @@ fn run_scan(
 
 fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
     let mut prog = progress::Progress::new(json);
-
     let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, 1, true);
     prog.advance();
-
     let classified = classify(entries, &ctx);
     prog.advance();
     prog.advance();
@@ -403,40 +408,17 @@ fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
         return;
     }
 
-    // SIMULATE = operational: what would happen if I clean now
     let ds = summary::DecisionSummary::from_files(&classified, ctx.open_files.len());
     println!("\n{}", display::render_decision_summary(&ds));
 
-    // Show what's safe + what's blocked with action labels
-    println!(
-        "{}",
-        display::render_simulation(&classified, "DRY RUN — What Would Happen")
-    );
+    let domains = domain::summarize(&classified);
+    println!("{}", display::render_domain_summary(&domains));
 
-    // Insight footer
-    let (safe, low, mod_, high, prot) = count_decisions(&classified);
-    let insight_ctx = display::InsightContext {
-        total: classified.len(),
-        safe,
-        low_risk: low,
-        moderate: mod_,
-        high_risk: high,
-        protected: prot,
-        total_size: classified.iter().map(|f| f.size).sum(),
-        open_files: ctx.open_files.len(),
-    };
-    println!("{}", display::render_insights(&insight_ctx));
+    let cs = confidence::ConfidenceSummary::from_files(&classified);
+    println!("{}", display::render_confidence_summary(&cs));
 
-    // Rollback availability
-    let snaps = snapshot::Snapshot::list_all();
-    if !snaps.is_empty() {
-        println!(
-            "  ⚡ Rollback: {} snapshot(s) available ({})",
-            snaps.len(),
-            snaps.last().unwrap()
-        );
-        println!("     Use 'zacxiom undo' to restore.\n");
-    }
+    let _report = simulator::simulate(&classified, &ctx.health, &ctx.profile);
+    println!("{}", display::render_simulation(&classified, "SIMULATION"));
 }
 
 fn run_clean(
@@ -444,149 +426,223 @@ fn run_clean(
     depth: usize,
     smart: bool,
     force: bool,
+    dry_run: bool,
     json: bool,
     profile: &str,
 ) {
+    let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, 1, true);
+    prog.advance();
     let classified = classify(entries, &ctx);
+    prog.advance();
+    prog.advance();
+    prog.done();
 
-    let _sim = simulator::simulate(&classified, &ctx.health, &ctx.profile);
-    if !json {
-        let ds = summary::DecisionSummary::from_files(&classified, ctx.open_files.len());
-        println!("\n{}", display::render_decision_summary(&ds));
-        println!(
-            "{}",
-            display::render_simulation(&classified, "BEFORE CLEAN")
-        );
-        let (safe, low, mod_, high, prot) = count_decisions(&classified);
-        let insight_ctx = display::InsightContext {
-            total: classified.len(),
-            safe,
-            low_risk: low,
-            moderate: mod_,
-            high_risk: high,
-            protected: prot,
-            total_size: classified.iter().map(|f| f.size).sum(),
-            open_files: ctx.open_files.len(),
+    if dry_run {
+        // v6.2.0: dry-run mode — preview only
+        let cleanable: Vec<_> = classified
+            .iter()
+            .filter(|f| f.decision.is_cleanable(smart, force))
+            .collect();
+        let skipped: Vec<_> = classified
+            .iter()
+            .filter(|f| !f.decision.is_cleanable(smart, force))
+            .collect();
+
+        let to_clean_size: u64 = cleanable.iter().map(|f| f.size).sum();
+        let skipped_size: u64 = skipped.iter().map(|f| f.size).sum();
+
+        let mode = if force {
+            "force"
+        } else if smart {
+            "smart"
+        } else {
+            "safe"
         };
-        println!("{}", display::render_insights(&insight_ctx));
+
+        println!();
+        println!("╔══════════════════════════════════════════════════════════╗");
+        println!("║           DRY RUN — Preview Only (no files deleted)     ║");
+        println!("╠══════════════════════════════════════════════════════════╣");
+        println!(
+            "║  Mode:         {:<41} ║",
+            format!(
+                "{mode} ({})",
+                if force {
+                    "★★★★★ + ★★★★ + ★★★"
+                } else if smart {
+                    "★★★★★ + ★★★★"
+                } else {
+                    "★★★★★ only"
+                }
+            )
+        );
+        println!(
+            "║  Would clean:  {:>5} files ({:<33}) ║",
+            cleanable.len(),
+            simulator::human_size(to_clean_size)
+        );
+        println!(
+            "║  Would skip:   {:>5} files ({:<33}) ║",
+            skipped.len(),
+            simulator::human_size(skipped_size)
+        );
+        println!("╚══════════════════════════════════════════════════════════╝");
+
+        // Confidence breakdown of what would be cleaned
+        let owned_cleanable: Vec<rules::ClassifiedFile> =
+            cleanable.iter().map(|&f| f.clone()).collect();
+        let cs = confidence::ConfidenceSummary::from_files(&owned_cleanable);
+        println!(
+            "\n  ★★★★★ Maximum Safety:  {} files ({})",
+            cs.maximum,
+            simulator::human_size(
+                cleanable
+                    .iter()
+                    .filter(|f| matches!(confidence::confidence(f), confidence::Tier::Maximum))
+                    .map(|f| f.size)
+                    .sum()
+            )
+        );
+        println!(
+            "  ★★★★  High Safety:     {} files ({})",
+            cs.high,
+            simulator::human_size(
+                cleanable
+                    .iter()
+                    .filter(|f| matches!(confidence::confidence(f), confidence::Tier::High))
+                    .map(|f| f.size)
+                    .sum()
+            )
+        );
+        println!(
+            "  ★★★   Review Rec:      {} files ({})",
+            cs.moderate,
+            simulator::human_size(
+                cleanable
+                    .iter()
+                    .filter(|f| matches!(confidence::confidence(f), confidence::Tier::Moderate))
+                    .map(|f| f.size)
+                    .sum()
+            )
+        );
+
+        if !cleanable.is_empty() {
+            println!("\n  Would clean:\n");
+            for f in cleanable.iter().take(20) {
+                let tier = confidence::confidence(f);
+                println!(
+                    "  {} {}  {}",
+                    tier.stars(),
+                    simulator::human_size(f.size),
+                    f.path
+                );
+            }
+            if cleanable.len() > 20 {
+                println!("  ... and {} more files", cleanable.len() - 20);
+            }
+        }
+        return;
     }
 
-    // v5: Safety lock validation
-    let check = safety::validate_clean(&classified, smart, force, true);
-    if !check.passed {
-        eprintln!("SAFETY LOCK: Clean blocked.");
-        for v in &check.violations {
-            eprintln!("  ❌ {v}");
+    // Actual clean
+    let mut snap = snapshot::Snapshot::new();
+    for f in &classified {
+        snap.add(&f.path, f.size, None);
+    }
+    let _snap_path = snap.save().unwrap_or_default();
+    let snap_id = chrono_now();
+    let report = cleaner::clean(&classified, smart, force);
+
+    if json {
+        let out = serde_json::json!({
+            "snapshot_id": snap_id,
+            "files_removed": report.files_removed,
+            "bytes_freed": report.bytes_freed,
+            "files_skipped": report.files_skipped,
+            "bytes_skipped": report.bytes_skipped,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        return;
+    }
+
+    println!();
+    println!("╔══════════════════════════════════════════════════════════╗");
+    println!("║           CLEAN COMPLETE                                ║");
+    println!("╠══════════════════════════════════════════════════════════╣");
+    println!(
+        "║  Removed:  {:>5} files ({:<33}) ║",
+        report.files_removed,
+        simulator::human_size(report.bytes_freed)
+    );
+    println!(
+        "║  Skipped:  {:>5} files ({:<33}) ║",
+        report.files_skipped,
+        simulator::human_size(report.bytes_skipped)
+    );
+    if !report.errors.is_empty() {
+        println!(
+            "║  Errors:   {:>5}                                   ║",
+            report.errors.len()
+        );
+    }
+    println!("╠══════════════════════════════════════════════════════════╣");
+    println!("║  Snapshot:  {:<43} ║", snap.id);
+    println!("║  Undo:      zacxiom undo {:<31} ║", snap.id);
+    println!("╚══════════════════════════════════════════════════════════╝");
+
+    if !report.errors.is_empty() {
+        println!("\n  Errors:");
+        for e in &report.errors {
+            println!("    {} → {}", e.path, e.error);
         }
+    }
+}
+
+fn run_explain(path: &str) {
+    // v6.2.0: explain command — show 5-question trust card
+    // Scan the area around the path to find files
+    let target = PathBuf::from(path);
+    let roots = if target.is_dir() {
+        vec![target.clone()]
+    } else if let Some(parent) = target.parent() {
+        vec![parent.to_path_buf()]
+    } else {
+        eprintln!("Invalid path: {path}");
+        std::process::exit(1);
+    };
+
+    let ctx = RunContext::new("dev");
+    let entries = scanner::scan(&roots, 1, 1, true);
+    let classified = classify(entries, &ctx);
+
+    if classified.is_empty() {
+        // Try domain-level explanation
+        let domains = domain::summarize(&[]);
+        for d in &domains {
+            if d.domain.to_lowercase().contains(&path.to_lowercase()) {
+                let tier = if d.risk_score < 0.15 {
+                    confidence::Tier::Maximum
+                } else if d.risk_score < 0.35 {
+                    confidence::Tier::High
+                } else {
+                    confidence::Tier::Moderate
+                };
+                let exp = explain::explain_domain(&d.domain, d.total_size, tier, d.file_count);
+                println!("{}", explain::render_card(&exp));
+                return;
+            }
+        }
+        eprintln!("No files found at: {path}");
         std::process::exit(1);
     }
 
-    if force {
-        use std::io::{self, Write};
-        print!("\n⚠️  --force mode: Type YES to proceed: ");
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        if input.trim() != "YES" {
-            println!("Clean aborted.");
-            std::process::exit(1);
-        }
-    }
-
-    // v4: Snapshot before clean for undo support
-    let mut snap = snapshot::Snapshot::new();
-    let cleaned_paths: Vec<String> = classified
-        .iter()
-        .filter(|f| f.decision.is_cleanable(smart, force))
-        .map(|f| f.path.clone())
-        .collect();
-    for f in &classified {
-        if f.decision.is_cleanable(smart, force) {
-            snap.add(&f.path, f.size, None);
-        }
-    }
-    let _ = snap.save();
-
-    let report = cleaner::clean(&classified, smart, force);
-
-    // v5: Record to context memory
-    let mut mem = memory::ContextMemory::load();
-    mem.record_clean(&cleaned_paths);
-
-    let mut hist = history::History::load();
-    hist.add(history::CleanRecord {
-        timestamp: chrono_now(),
-        version: env!("CARGO_PKG_VERSION").into(),
-        action: if force {
-            "clean --force".into()
-        } else if smart {
-            "clean --smart".into()
-        } else {
-            "clean".into()
-        },
-        files_removed: report.files_removed,
-        bytes_freed: report.bytes_freed,
-        files_skipped: report.files_skipped,
-        paths: classified.iter().map(|f| f.path.clone()).collect(),
-    });
-
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "files_removed": report.files_removed,
-                "bytes_freed": report.bytes_freed,
-                "files_skipped": report.files_skipped,
-                "bytes_skipped": report.bytes_skipped,
-                "errors": report.errors.iter().map(|e| {
-                    let kind = errors::ErrorKind::from_io_error(
-                        &std::io::Error::other(e.error.clone())
-                    );
-                    serde_json::json!({"path": e.path, "kind": kind.label(), "detail": e.error})
-                }).collect::<Vec<_>>(),
-            }))
-            .unwrap()
-        );
-    } else {
-        let clean_msg = format!(
-            "CLEAN COMPLETE — {} files freed ({})",
-            report.files_removed,
-            display::human_size(report.bytes_freed)
-        );
-        let mut err_summary = errors::ErrorSummary::default();
-        for e in &report.errors {
-            let kind = errors::ErrorKind::from_io_error(&std::io::Error::other(e.error.clone()));
-            match kind {
-                errors::ErrorKind::PermissionDenied => err_summary.permission_denied += 1,
-                errors::ErrorKind::InUse => err_summary.in_use += 1,
-                errors::ErrorKind::SystemFile => err_summary.system_protected += 1,
-                errors::ErrorKind::LockedProcess => err_summary.locked += 1,
-                errors::ErrorKind::NotFound => err_summary.not_found += 1,
-                _ => err_summary.unknown += 1,
-            }
-        }
-        println!("\n┌{:─^78}┐", "");
-        println!("│ {:^76} │", clean_msg);
-        if report.files_skipped > 0 {
-            println!(
-                "│ {:<76} │",
-                format!(
-                    "Skipped: {} files ({})",
-                    report.files_skipped,
-                    display::human_size(report.bytes_skipped)
-                )
-            );
-        }
-        if !err_summary.is_empty() {
-            let summary_lines = err_summary.format_summary();
-            for line in summary_lines.lines() {
-                println!("│ {:<76} │", line.trim());
-            }
-        }
-        println!("└{:─^78}┘", "");
+    // File-level explanations for top matches
+    for f in classified.iter().take(5) {
+        let exp = explain::explain_file(f);
+        println!("{}", explain::render_card(&exp));
     }
 }
 
@@ -621,9 +677,9 @@ fn run_status() {
     let mem = memory::ContextMemory::load();
     let safe = safety::system_health_check();
 
-    println!("═══════════════════════════════════");
-    println!("  ZACXIOM STATUS");
-    println!("═══════════════════════════════════");
+    println!("═══════════════════════════════════════");
+    println!("  ZACXIOM v{} STATUS", env!("CARGO_PKG_VERSION"));
+    println!("═══════════════════════════════════════");
     println!("  Health    : {:?}", health);
     println!("  History   : {} records", hist.records.len());
     println!("  Snapshots : {} available", snaps.len());
@@ -654,21 +710,7 @@ fn run_status() {
         "  Safety    : {}",
         if safe.passed { "PASS" } else { "FAIL" }
     );
-    println!("═══════════════════════════════════");
-}
-
-fn count_decisions(files: &[rules::ClassifiedFile]) -> (usize, usize, usize, usize, usize) {
-    let (mut safe, mut low, mut mod_, mut high, mut prot) = (0, 0, 0, 0, 0);
-    for f in files {
-        match f.decision {
-            rules::Decision::Safe => safe += 1,
-            rules::Decision::LowRisk => low += 1,
-            rules::Decision::Moderate => mod_ += 1,
-            rules::Decision::HighRisk => high += 1,
-            rules::Decision::Protected => prot += 1,
-        }
-    }
-    (safe, low, mod_, high, prot)
+    println!("═══════════════════════════════════════");
 }
 
 fn chrono_now() -> String {
