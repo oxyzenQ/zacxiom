@@ -16,6 +16,7 @@
 //! Consumable by: CLI, GUI, TUI, API, future tools.
 
 pub mod classifier;
+pub mod confidence;
 pub mod metadata;
 pub mod rules;
 pub mod types;

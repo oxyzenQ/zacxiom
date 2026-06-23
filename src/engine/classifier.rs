@@ -75,6 +75,9 @@ pub fn classify(path: &Path) -> ClassificationResult {
     // Cap confidence
     result.confidence = result.confidence.clamp(0.0, 1.0);
 
+    // v6.3: Numerical confidence scoring
+    super::confidence::score(&mut result, path, &lower);
+
     // If still unknown, note it
     if result.category == Category::Unknown {
         result.reasons.push("No classification rule matched".into());

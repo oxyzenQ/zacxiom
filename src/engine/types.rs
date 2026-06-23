@@ -128,8 +128,14 @@ pub struct ClassificationResult {
     pub path: PathBuf,
     pub category: Category,
     pub risk_level: RiskLevel,
-    /// Confidence in the classification (0.0–1.0).
+    /// Confidence in the classification (0.0–1.0). Deprecated: use `confidence`.
     pub confidence: f32,
+    /// Confidence score 0-100 (v6.3).
+    pub confidence_score: u8,
+    /// Human-readable confidence label.
+    pub confidence_explanation: String,
+    /// Detailed confidence reasons.
+    pub confidence_reasons: Vec<String>,
     /// Size in bytes, if known.
     pub size: Option<u64>,
     /// Why this classification was chosen.
@@ -147,6 +153,9 @@ impl ClassificationResult {
             category: Category::Unknown,
             risk_level: RiskLevel::Moderate,
             confidence: 0.0,
+            confidence_score: 0,
+            confidence_explanation: String::new(),
+            confidence_reasons: Vec::new(),
             size: None,
             reasons: Vec::new(),
             regenerable: false,

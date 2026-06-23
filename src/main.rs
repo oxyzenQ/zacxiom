@@ -796,7 +796,8 @@ fn run_explain(path: &str) {
         let threads = 1;
         let classified = classify(entries, &ctx, threads);
         let exp = explain::explain_path(path, &classified);
-        println!("{}", explain::render_card(&exp));
+        let eng = crate::engine::classify(&target);
+        println!("{}", explain::render_card(&exp, Some(&eng)));
         return;
     }
 
@@ -807,7 +808,8 @@ fn run_explain(path: &str) {
     let classified = classify(entries, &ctx, threads);
 
     let exp = explain::explain_path(path, &classified);
-    println!("{}", explain::render_card(&exp));
+    let eng = crate::engine::classify(&PathBuf::from(path));
+    println!("{}", explain::render_card(&exp, Some(&eng)));
 }
 
 fn run_undo(id: Option<String>) {

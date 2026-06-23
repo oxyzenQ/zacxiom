@@ -258,8 +258,8 @@ pub fn explain_file(file: &ClassifiedFile) -> Explanation {
     explain_domain(&eng, file.size, tier, 1)
 }
 
-/// Render an explanation card — clean, readable, no box-drawing.
-pub fn render_card(exp: &Explanation) -> String {
+/// Render an explanation card with confidence (v6.3).
+pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::ClassificationResult>) -> String {
     let mut out = String::new();
     let stars = exp.tier.stars();
 
@@ -275,5 +275,16 @@ pub fn render_card(exp: &Explanation) -> String {
     out.push_str(&format!("  Safe:       {}\n", exp.why_safe));
     out.push_str(&format!("  If deleted: {}\n", exp.consequence));
     out.push_str(&format!("  Action:     {}\n", exp.recommendation));
+
+    // v6.3: Confidence score
+    if let Some(eng) = eng {
+        out.push_str(&format!(
+            "\n  Confidence: {}%  —  {}\n",
+            eng.confidence_score, eng.confidence_explanation
+        ));
+        for reason in &eng.confidence_reasons {
+            out.push_str(&format!("    {}\n", reason));
+        }
+    }
     out
 }
