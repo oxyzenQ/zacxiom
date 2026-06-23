@@ -5,12 +5,13 @@
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.
-//! v6.2: Trust Release — explain, dry-run, confidence tiers, top contributors.
+//! v6.2.3: Dynamic multithreading + purple accent styling.
 #![allow(dead_code)]
 
 mod cache;
 mod cleaner;
 mod cli;
+mod color;
 mod confidence;
 mod display;
 mod domain;
@@ -33,6 +34,7 @@ mod summary;
 
 use clap::Parser;
 use cli::{Cli, Command};
+use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -78,6 +80,7 @@ impl RunContext {
 }
 
 fn main() {
+    color::init();
     let cli = Cli::parse();
     if cli.version {
         print_version();
@@ -326,34 +329,59 @@ fn resolve_roots(paths: Vec<String>) -> Vec<PathBuf> {
     }
 }
 
-fn classify(entries: Vec<scanner::ScanEntry>, ctx: &RunContext) -> Vec<rules::ClassifiedFile> {
-    entries
-        .into_iter()
-        .map(|e| {
-            let d = cache::classify(&e.path);
-            let o = ownership::detect(&e.path);
-            let path_str = e.path.to_string_lossy().to_string();
-            let age = risk::file_age_days(&path_str);
-            let modif = ctx.memory.risk_modifier(&path_str);
-            let mut scored = risk::score_v3(&risk::RiskSignals {
-                path: &path_str,
-                size: e.size,
-                domain: &d,
-                ownership: &o,
-                open_files: Some(&ctx.open_files),
-                history_cleaned: Some(&ctx.history_cleaned),
-                memory_modifier: modif,
-                age_days: age,
-            });
-            if modif != 0.0 {
-                scored.risk_reasons.push(format!(
-                    "memory: adaptive modifier {modif:+.3} (sessions: {})",
-                    ctx.memory.sessions
-                ));
-            }
-            scored
+/// Determine optimal thread count based on workload size.
+/// Small: 2 threads. Medium: half of logical CPUs. Large: all CPUs.
+fn optimal_threads(file_count: usize) -> usize {
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    if file_count < 5_000 {
+        2.min(cpus)
+    } else if file_count < 50_000 {
+        (cpus / 2).max(2)
+    } else {
+        cpus.max(2)
+    }
+}
+
+fn classify(
+    entries: Vec<scanner::ScanEntry>,
+    ctx: &RunContext,
+    threads: usize,
+) -> Vec<rules::ClassifiedFile> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .expect("rayon pool")
+        .install(|| {
+            entries
+                .into_par_iter()
+                .map(|e| {
+                    let d = cache::classify(&e.path);
+                    let o = ownership::detect(&e.path);
+                    let path_str = e.path.to_string_lossy().to_string();
+                    let age = risk::file_age_days(&path_str);
+                    let modif = ctx.memory.risk_modifier(&path_str);
+                    let mut scored = risk::score_v3(&risk::RiskSignals {
+                        path: &path_str,
+                        size: e.size,
+                        domain: &d,
+                        ownership: &o,
+                        open_files: Some(&ctx.open_files),
+                        history_cleaned: Some(&ctx.history_cleaned),
+                        memory_modifier: modif,
+                        age_days: age,
+                    });
+                    if modif != 0.0 {
+                        scored.risk_reasons.push(format!(
+                            "memory: adaptive modifier {modif:+.3} (sessions: {})",
+                            ctx.memory.sessions
+                        ));
+                    }
+                    scored
+                })
+                .collect()
         })
-        .collect()
 }
 
 fn run_scan(
@@ -369,7 +397,9 @@ fn run_scan(
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, min_size, true);
     prog.advance();
-    let classified = classify(entries, &ctx);
+    let threads = optimal_threads(entries.len());
+    prog.set_threads(threads);
+    let classified = classify(entries, &ctx, threads);
     prog.advance();
     prog.advance();
     prog.done();
@@ -406,7 +436,9 @@ fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, 1, true);
     prog.advance();
-    let classified = classify(entries, &ctx);
+    let threads = optimal_threads(entries.len());
+    prog.set_threads(threads);
+    let classified = classify(entries, &ctx, threads);
     prog.advance();
     prog.advance();
     prog.done();
@@ -446,7 +478,9 @@ fn run_clean(
     let roots = resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, 1, true);
     prog.advance();
-    let classified = classify(entries, &ctx);
+    let threads = optimal_threads(entries.len());
+    prog.set_threads(threads);
+    let classified = classify(entries, &ctx, threads);
     prog.advance();
     prog.advance();
     prog.done();
@@ -657,7 +691,8 @@ fn run_explain(path: &str) {
 
     let ctx = RunContext::new("dev");
     let entries = scanner::scan(&roots, 2, 1, true);
-    let classified = classify(entries, &ctx);
+    let threads = optimal_threads(entries.len());
+    let classified = classify(entries, &ctx, threads);
 
     // Always use domain-level explanation for the path
     let exp = explain::explain_path(path, &classified);

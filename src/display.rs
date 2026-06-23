@@ -39,10 +39,9 @@ fn detect_width() -> usize {
     DEFAULT_W
 }
 
-/// Section header: NAME\n──────
+/// Section header — purple accent, plain fallback.
 pub fn section(name: &str) -> String {
-    let w = term_width().min(name.len() + 4);
-    format!("\n{}\n{}\n", name, "─".repeat(w))
+    crate::color::section_header(name)
 }
 
 /// Key-value line: label:  value

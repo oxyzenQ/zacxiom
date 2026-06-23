@@ -1,11 +1,11 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Progress state machine v2 — live spinner + counters.
+//! Progress state machine v3 — purple spinner + live counters + threads.
 //!
-//! v6.2.2: Added `set_status()` with live counters to prevent "frozen" perception.
-//! v6.3:   Spinner animation frames for active-phase feedback.
+//! v6.2.3: Purple ANSI spinner, thread count display, dynamic progress bar.
 
+use crate::color;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -60,8 +60,8 @@ pub struct Progress {
     started: Instant,
     quiet: bool,
     spinner_idx: usize,
-    last_count: usize,
     running: Arc<AtomicBool>,
+    thread_count: usize,
 }
 
 impl Progress {
@@ -71,9 +71,14 @@ impl Progress {
             started: Instant::now(),
             quiet,
             spinner_idx: 0,
-            last_count: 0,
             running: Arc::new(AtomicBool::new(false)),
+            thread_count: 0,
         }
+    }
+
+    /// Set the number of worker threads in use (v6.2.3).
+    pub fn set_threads(&mut self, n: usize) {
+        self.thread_count = n;
     }
 
     /// Start a background spinner thread for long phases.
@@ -84,20 +89,27 @@ impl Progress {
         self.running.store(true, Ordering::SeqCst);
         let running = self.running.clone();
         let phase = self.phase;
+        let threads = self.thread_count;
         std::thread::spawn(move || {
             let mut idx = 0;
             while running.load(Ordering::SeqCst) {
-                let spinner = SPINNER[idx % SPINNER.len()];
+                let spinner = color::purple_spinner(SPINNER[idx % SPINNER.len()]);
+                let thread_info = if threads > 0 {
+                    format!(" ({threads} threads)")
+                } else {
+                    String::new()
+                };
                 print!(
-                    "{}  {} [{:5}] {:<22}",
+                    "{}  {} [{:5}] {:<22}{}",
                     CLEAR,
                     spinner,
                     phase.label(),
                     phase.desc(),
+                    thread_info,
                 );
                 io::stdout().flush().ok();
                 idx += 1;
-                std::thread::sleep(std::time::Duration::from_millis(120));
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
         });
     }
@@ -105,7 +117,6 @@ impl Progress {
     /// Stop the spinner thread.
     pub fn stop_spinner(&mut self) {
         self.running.store(false, Ordering::SeqCst);
-        // Small delay so the spinner thread can exit
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
 
@@ -114,23 +125,63 @@ impl Progress {
         self.stop_spinner();
         if !self.quiet {
             let elapsed = self.started.elapsed().as_secs_f64();
+            let check = color::purple("✓");
+            let thread_extra = if self.thread_count > 0 {
+                format!(" ({t} threads)", t = self.thread_count)
+            } else {
+                String::new()
+            };
             println!(
-                "{}  ✓ [{:5}] {:<22} ({:.1}s)",
+                "{}  {} [{:5}] {:<22}{} ({:.1}s)",
                 CLEAR,
+                check,
                 self.phase.label(),
                 self.phase.desc(),
+                thread_extra,
                 elapsed
             );
             io::stdout().flush().ok();
         }
         self.phase = self.phase.next();
-        // Start spinner for new phase if it's long
         match self.phase {
             Phase::Scan | Phase::Analyze | Phase::Classify => {
                 self.start_spinner();
             }
             _ => {}
         }
+    }
+
+    /// Update status with live counter + progress bar (v6.2.3).
+    pub fn status(&self, count: usize, total: usize) {
+        if self.quiet {
+            return;
+        }
+        let spinner = color::purple_spinner(SPINNER[self.spinner_idx % SPINNER.len()]);
+        let pct = if total > 0 {
+            (count as f64 / total as f64 * 100.0) as usize
+        } else {
+            0
+        };
+        let bar_width = 15;
+        let filled = (pct * bar_width / 100).min(bar_width);
+        let thread_extra = if self.thread_count > 0 {
+            format!(" ({t} threads)", t = self.thread_count)
+        } else {
+            String::new()
+        };
+        print!(
+            "{}  {} [{:5}] {:>7} / {:<7}  [{}{}] {:>3}%{}",
+            CLEAR,
+            spinner,
+            self.phase.label(),
+            format_num(count),
+            format_num(total),
+            "█".repeat(filled),
+            "░".repeat(bar_width - filled),
+            pct,
+            thread_extra,
+        );
+        io::stdout().flush().ok();
     }
 
     /// Mark complete — print final phase and newline.
@@ -141,44 +192,22 @@ impl Progress {
         }
         let elapsed = self.started.elapsed().as_secs_f64();
         self.phase = Phase::Ready;
+        let check = color::purple("✓");
+        let thread_extra = if self.thread_count > 0 {
+            format!(" ({t} threads)", t = self.thread_count)
+        } else {
+            String::new()
+        };
         println!(
-            "{}  ✓ [{:5}] {:<22} ({:.1}s)",
+            "{}  {} [{:5}] {:<22}{} ({:.1}s)",
             CLEAR,
+            check,
             self.phase.label(),
             self.phase.desc(),
+            thread_extra,
             elapsed
         );
         println!();
-    }
-
-    /// Update status text with live counter (v6.2.2).
-    pub fn status(&self, count: usize, total: usize, _label: &str) {
-        if self.quiet {
-            return;
-        }
-        let spinner = SPINNER[self.spinner_idx % SPINNER.len()];
-        let pct = if total > 0 {
-            (count as f64 / total as f64 * 100.0) as usize
-        } else {
-            0
-        };
-        let bar_width = 20;
-        let filled = (pct * bar_width / 100).min(bar_width);
-        print!(
-            "{}  {} [{:5}] {:>7} / {:<7} files  {:<}",
-            CLEAR,
-            spinner,
-            self.phase.label(),
-            format_num(count),
-            format_num(total),
-            format!(
-                "[{}{}] {}%",
-                "█".repeat(filled),
-                "░".repeat(bar_width - filled),
-                pct
-            ),
-        );
-        io::stdout().flush().ok();
     }
 }
 
