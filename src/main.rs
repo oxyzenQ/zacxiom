@@ -393,7 +393,7 @@ fn classify(
                     "░".repeat(bar.saturating_sub(filled)),
                     pct,
                 );
-                std::thread::sleep(std::time::Duration::from_millis(150));
+                std::thread::sleep(std::time::Duration::from_millis(250));
             }
             print!("\r\x1b[K");
             std::io::stdout().flush().ok();
@@ -775,26 +775,36 @@ fn run_clean(
 }
 
 fn run_explain(path: &str) {
-    // v6.2.2: domain-centric explain — think like a storage advisor
+    // v6.2.4: fixed — distinguish file vs directory, scan correctly
     let target = PathBuf::from(path);
-    let roots = if target.is_dir() {
-        vec![target.clone()]
-    } else if target.parent().is_some() && target.exists() {
-        // For a file, explain its containing directory's domain
-        vec![target.parent().unwrap().to_path_buf()]
-    } else if target.parent().is_some() {
-        vec![target.parent().unwrap().to_path_buf()]
-    } else {
-        eprintln!("Cannot access: {path}");
+    if !target.exists() {
+        eprintln!("No such path: {path}");
         std::process::exit(1);
-    };
+    }
 
     let ctx = RunContext::new("dev");
-    let entries = scanner::scan(&roots, 2, 1, true);
+
+    if target.is_file() {
+        // Single file — create a scan entry directly, never scan parent dir
+        let size = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+        let entry = scanner::ScanEntry {
+            path: target.clone(),
+            size,
+        };
+        let entries = vec![entry];
+        let threads = 1;
+        let classified = classify(entries, &ctx, threads);
+        let exp = explain::explain_path(path, &classified);
+        println!("{}", explain::render_card(&exp));
+        return;
+    }
+
+    // Directory — scan only that directory, not parent; use sufficient depth
+    let roots = vec![target];
+    let entries = scanner::scan(&roots, 8, 1, true);
     let threads = optimal_threads(entries.len());
     let classified = classify(entries, &ctx, threads);
 
-    // Always use domain-level explanation for the path
     let exp = explain::explain_path(path, &classified);
     println!("{}", explain::render_card(&exp));
 }
