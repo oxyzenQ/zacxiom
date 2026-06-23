@@ -29,15 +29,9 @@ pub fn explain_path(path: &str, classified: &[ClassifiedFile]) -> Explanation {
     // Use the engine to classify this path
     let eng_result = crate::engine::classify(std::path::Path::new(path));
 
-    let tier = if classified.is_empty() {
-        category_to_tier(&eng_result.category)
-    } else {
-        classified
-            .iter()
-            .map(confidence)
-            .max()
-            .unwrap_or(category_to_tier(&eng_result.category))
-    };
+    // v6.3.2: Engine category is authoritative for explain tier.
+    // Legacy classified files are used ONLY for size/count, not tier.
+    let tier = category_to_tier(&eng_result.category);
 
     let total_size: u64 = classified.iter().map(|f| f.size).sum();
 
@@ -63,9 +57,11 @@ fn category_to_tier(cat: &Category) -> Tier {
         | Category::EnvironmentFile
         | Category::ApplicationData => Tier::Moderate,
 
-        Category::Cache | Category::DockerStorage | Category::GameData | Category::AIModelCache => {
-            Tier::High
-        }
+        Category::Cache
+        | Category::DockerStorage
+        | Category::GameData
+        | Category::AIModelCache
+        | Category::DownloadedArtifact => Tier::High,
 
         Category::BuildCache
         | Category::PackageCache
@@ -207,6 +203,12 @@ fn render_category(
             "These files were created for temporary use. Safe to remove.".into(),
             "No impact. These files were intended to be temporary.".into(),
             None,
+        ),
+        Category::DownloadedArtifact => (
+            "Downloaded software component or SDK artifact.",
+            "Can be redownloaded from the internet, but large and time-consuming. Not cache — this is installed software that can be restored.".into(),
+            "Next build or tool invocation will redownload the component. This may take significant time and bandwidth.".into(),
+            Some("Safe to reclaim if disk space is critical. Otherwise keep — redownloading is expensive.".into()),
         ),
         Category::ApplicationData => (
             "User application data — saved states, databases, user-generated content.",

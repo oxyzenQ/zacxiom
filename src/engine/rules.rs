@@ -499,10 +499,18 @@ fn build_rules() -> Vec<Rule> {
             matches: |_, lower| {
                 lower.contains("/.rustup/toolchains/") || lower.contains("/.rustup/update-hashes/")
             },
-            category: Category::BuildCache,
+            category: Category::DownloadedArtifact,
             risk_level: RiskLevel::Low,
             regenerable: true,
-            reason: "Rust toolchain components — redownloaded by rustup",
+            reason: "Rust toolchain installation — redownloaded by rustup, but expensive",
+        },
+        Rule {
+            name: "app-cargo-registry",
+            matches: |_, lower| lower.contains("/.cargo/registry/"),
+            category: Category::DownloadedArtifact,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "Cargo crate registry — redownloaded on next build, but large",
         },
         Rule {
             name: "app-node-modules",

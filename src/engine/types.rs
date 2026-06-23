@@ -36,6 +36,9 @@ pub enum Category {
     BrowserCache,
     TemporaryFile,
 
+    // ── Downloaded artifacts: regenerable but expensive ────
+    DownloadedArtifact,
+
     // ── Application data: review before cleaning ────────────
     ApplicationData,
     DockerStorage,
@@ -56,6 +59,7 @@ impl Category {
                 | Category::PackageCache
                 | Category::BrowserCache
                 | Category::TemporaryFile
+                | Category::DownloadedArtifact
         )
     }
 
@@ -91,6 +95,7 @@ impl Category {
             Category::PackageCache => "Package Cache",
             Category::BrowserCache => "Browser Cache",
             Category::TemporaryFile => "Temporary File",
+            Category::DownloadedArtifact => "Downloaded Artifact",
             Category::ApplicationData => "Application Data",
             Category::DockerStorage => "Docker Storage",
             Category::GameData => "Game Data",
