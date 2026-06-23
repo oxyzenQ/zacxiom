@@ -67,6 +67,8 @@ pub enum Command {
         profile: String,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Execute safe clean (only SAFE files unless --smart/--force)

@@ -92,10 +92,10 @@ pub fn purple_spinner(spin: char) -> String {
 /// Purple section header line.
 pub fn section_header(name: &str) -> String {
     if !is_enabled() {
-        return format!("\n{}\n{}", name, "─".repeat(name.len().min(60)));
+        return format!("\n{}\n{}\n", name, "─".repeat(name.len().min(60)));
     }
     format!(
-        "\n\x1b[38;2;{r};{g};{b}m{name}\x1b[0m\n{sep}",
+        "\n\x1b[38;2;{r};{g};{b}m{name}\x1b[0m\n{sep}\n",
         r = PURPLE_R,
         g = PURPLE_G,
         b = PURPLE_B,

@@ -36,6 +36,7 @@ use clap::Parser;
 use cli::{Cli, Command};
 use rayon::prelude::*;
 use std::collections::HashSet;
+use std::io::Write;
 use std::path::PathBuf;
 
 const BUILD_TARGET: &str = {
@@ -117,7 +118,8 @@ fn main() {
             depth,
             profile,
             json,
-        } => run_simulate(paths, depth, json, &profile),
+            verbose,
+        } => run_simulate(paths, depth, json, verbose, &profile),
 
         Command::Clean {
             paths,
@@ -349,7 +351,58 @@ fn classify(
     ctx: &RunContext,
     threads: usize,
 ) -> Vec<rules::ClassifiedFile> {
-    rayon::ThreadPoolBuilder::new()
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let total = entries.len();
+    let counter = Arc::new(AtomicUsize::new(0));
+    let ctr = counter.clone();
+
+    // Progress reporter thread for large datasets
+    let _reporter = if total > 500 {
+        Some(std::thread::spawn(move || {
+            loop {
+                let done = ctr.load(Ordering::Relaxed);
+                if done >= total {
+                    break;
+                }
+                let pct = done * 100 / total;
+                let bar = 20;
+                let filled = pct * bar / 100;
+                let done_str = if done >= 1_000_000 {
+                    format!("{:.1}M", done as f64 / 1_000_000.0)
+                } else if done >= 1_000 {
+                    format!("{:.1}K", done as f64 / 1_000.0)
+                } else {
+                    format!("{done}")
+                };
+                let total_str = if total >= 1_000_000 {
+                    format!("{:.1}M", total as f64 / 1_000_000.0)
+                } else if total >= 1_000 {
+                    format!("{:.1}K", total as f64 / 1_000.0)
+                } else {
+                    format!("{total}")
+                };
+                print!(
+                    "\r\x1b[K  {} [{:5}] {:>7} / {:<7}  [{}{}] {:>3}%",
+                    crate::color::purple_spinner('⠋'),
+                    "CLASSIFY",
+                    done_str,
+                    total_str,
+                    "█".repeat(filled),
+                    "░".repeat(bar.saturating_sub(filled)),
+                    pct,
+                );
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            print!("\r\x1b[K");
+            std::io::stdout().flush().ok();
+        }))
+    } else {
+        None
+    };
+
+    let result = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
         .expect("rayon pool")
@@ -378,10 +431,12 @@ fn classify(
                             ctx.memory.sessions
                         ));
                     }
+                    counter.fetch_add(1, Ordering::Relaxed);
                     scored
                 })
                 .collect()
-        })
+        });
+    result
 }
 
 fn run_scan(
@@ -430,7 +485,7 @@ fn run_scan(
     }
 }
 
-fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
+fn run_simulate(paths: Vec<String>, depth: usize, json: bool, verbose: bool, profile: &str) {
     let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
     let roots = resolve_roots(paths);
@@ -459,7 +514,52 @@ fn run_simulate(paths: Vec<String>, depth: usize, json: bool, profile: &str) {
     println!("{}", display::render_confidence_summary(&cs));
 
     let _report = simulator::simulate(&classified, &ctx.health, &ctx.profile);
-    println!("{}", display::render_simulation(&classified, "SIMULATION"));
+
+    // v6.2.4: default summary mode — domain + top contributors only
+    if verbose {
+        println!("{}", display::render_simulation(&classified, "SIMULATION"));
+    } else {
+        let cleanable: Vec<_> = classified
+            .iter()
+            .filter(|f| matches!(f.decision, rules::Decision::Safe | rules::Decision::LowRisk))
+            .collect();
+        let domains = domain::summarize(&classified);
+        if !domains.is_empty() {
+            println!("{}", display::render_domains_compact(&domains));
+        }
+        if !cleanable.is_empty() {
+            // Top contributors
+            let top = top_contributors(
+                &cleanable.iter().map(|f| (*f).clone()).collect::<Vec<_>>(),
+                8,
+            );
+            if !top.is_empty() {
+                println!("\nTOP CONTRIBUTORS\n{}", "─".repeat(40));
+                for (name, count, size) in &top {
+                    println!(
+                        "  {:<38} {:>4} files  {}",
+                        name,
+                        count,
+                        simulator::human_size(*size)
+                    );
+                }
+            }
+            // Top 20 largest
+            let mut sorted: Vec<_> = cleanable.iter().collect();
+            sorted.sort_by_key(|f| std::cmp::Reverse(f.size));
+            println!("\nLARGEST CLEANABLE\n{}", "─".repeat(40));
+            for f in sorted.iter().take(20) {
+                let tier = confidence::confidence(f);
+                println!(
+                    "  {} {}  {}",
+                    tier.stars(),
+                    simulator::human_size(f.size),
+                    f.path
+                );
+            }
+        }
+        println!("\n  (use --verbose for full file list)");
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

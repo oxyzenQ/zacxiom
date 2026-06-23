@@ -51,6 +51,37 @@ fn infer_domain_name(path: &str, classified: &[ClassifiedFile]) -> String {
         }
     }
 
+    // Protected/special paths — explain accurately, never as "cached"
+    let lower = path.to_lowercase();
+    if lower.contains(".config") && !lower.contains(".config/") {
+        // ~/.config itself — not a cache
+        return "Configuration Directory".into();
+    }
+    if lower.contains(".ssh") {
+        return "SSH Keys & Credentials".into();
+    }
+    if lower.contains(".gnupg") || lower.contains(".gpg") {
+        return "GPG Keys".into();
+    }
+    if lower.contains(".local/share") && !lower.contains(".local/share/") {
+        return "User Application Data".into();
+    }
+    if lower.contains(".password") || lower.contains("keyring") {
+        return "Credentials & Secrets".into();
+    }
+    if lower.contains(".mozilla") && lower.contains("profile") {
+        return "Firefox Profile".into();
+    }
+    if lower.contains(".chrome") && lower.contains("default") {
+        return "Chrome Profile".into();
+    }
+    if lower.contains("wallet") || lower.contains("kde") {
+        return "Desktop Wallet".into();
+    }
+    if lower.contains("systemd") || lower.contains("/etc/") {
+        return "System Configuration".into();
+    }
+
     // Fallback: path-based heuristics
     let lower = path.to_lowercase();
     if lower.contains(".cargo") || lower.contains("cargo") {
@@ -131,7 +162,48 @@ fn infer_domain_name(path: &str, classified: &[ClassifiedFile]) -> String {
 /// Generate a domain-level explanation.
 pub fn explain_domain(domain: &str, total_size: u64, tier: Tier, file_count: usize) -> Explanation {
     let lower = domain.to_lowercase();
-    let (what, why, consequence) = if lower.contains("browser") {
+    let (what, why, consequence) = if lower.contains("ssh")
+        || lower.contains("key")
+        || lower.contains("credential")
+    {
+        (
+            "SSH keys, authorized_keys, and credential files.",
+            "These are your identity and access credentials. Never auto-clean. Manual review only.",
+            "Deleting SSH keys permanently removes access to remote systems. Cannot be regenerated.",
+        )
+    } else if lower.contains("gpg") {
+        (
+            "GPG/OpenPGP encryption keys and keyring data.",
+            "These are cryptographic identities. Lost keys cannot be recovered. Manual review only.",
+            "Deleting keys means losing the ability to decrypt data encrypted to them.",
+        )
+    } else if lower.contains("config") && !lower.contains("cache") {
+        (
+            "Application configuration files and user preferences.",
+            "These contain your customized settings. Most apps recreate defaults if deleted, but customizations are lost.",
+            "Apps reset to factory defaults. Custom settings, shortcuts, and preferences are lost.",
+        )
+    } else if lower.contains("profile")
+        && (lower.contains("firefox") || lower.contains("chrome") || lower.contains("browser"))
+    {
+        (
+            "Browser profile data — bookmarks, history, saved passwords, extensions.",
+            "Browser profiles contain personal data that cannot be regenerated. Never auto-clean.",
+            "Bookmarks, saved passwords, and browsing history would be permanently lost.",
+        )
+    } else if lower.contains("local/share") || lower.contains("app data") {
+        (
+            "User application data — saved states, databases, user-generated content.",
+            "This is where applications store your actual data. Review file-by-file before deleting.",
+            "Application data may be permanently lost. Some apps sync to cloud, others do not.",
+        )
+    } else if lower.contains("wallet") || lower.contains("password") {
+        (
+            "Encrypted wallet and password storage.",
+            "Contains saved credentials. Never auto-clean. Loss means losing all saved passwords.",
+            "All saved passwords and wallet data permanently lost.",
+        )
+    } else if lower.contains("browser") {
         (
             "Browser cache, temporary internet files, and service worker storage.",
             "Browsers rebuild their cache automatically as you browse. No bookmarks, passwords, or settings are affected.",

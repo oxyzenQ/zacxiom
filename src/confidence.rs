@@ -26,15 +26,16 @@ pub enum Tier {
 }
 
 impl Tier {
-    pub fn stars(&self) -> &'static str {
-        match self {
+    pub fn stars(&self) -> String {
+        let stars = match self {
             Tier::Maximum => "★★★★★",
             Tier::High => "★★★★",
             Tier::Moderate => "★★★",
             Tier::Low => "★★",
             Tier::Minimal => "★",
             Tier::Protected => "⛔",
-        }
+        };
+        crate::color::purple(stars)
     }
 
     pub fn label(&self) -> &'static str {
