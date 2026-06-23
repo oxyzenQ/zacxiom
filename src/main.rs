@@ -19,6 +19,7 @@ mod engine;
 mod errors;
 mod explain;
 mod history;
+mod inspect;
 mod memory;
 mod ownership;
 mod policy;
@@ -146,6 +147,12 @@ fn main() {
         Command::CheckUpdate => check_update(),
         Command::Undo { id } => run_undo(id),
         Command::Status => run_status(),
+        Command::InspectUnknown {
+            paths,
+            depth,
+            json,
+            verbose,
+        } => run_inspect_unknown(paths, depth, json, verbose),
     }
 }
 
@@ -492,6 +499,10 @@ fn run_scan(
     let cs = confidence::ConfidenceSummary::from_files(&classified);
     println!("{}", display::render_confidence_summary(&cs));
 
+    // v6.3.2: classifier coverage
+    let cov = inspect::analyze(&classified);
+    println!("{}", inspect::render_coverage(&cov));
+
     if verbose {
         println!("{}", display::render_table(&classified, "FILE DETAIL"));
     }
@@ -524,6 +535,10 @@ fn run_simulate(paths: Vec<String>, depth: usize, json: bool, verbose: bool, pro
 
     let cs = confidence::ConfidenceSummary::from_files(&classified);
     println!("{}", display::render_confidence_summary(&cs));
+
+    // v6.3.2: classifier coverage
+    let cov = inspect::analyze(&classified);
+    println!("{}", inspect::render_coverage(&cov));
 
     let _report = simulator::simulate(&classified, &ctx.health, &ctx.profile);
 
@@ -821,6 +836,49 @@ fn run_explain(path: &str) {
     let exp = explain::explain_path(path, &classified);
     let eng = crate::engine::classify(&PathBuf::from(path));
     println!("{}", explain::render_card(&exp, Some(&eng)));
+}
+
+/// v6.3.2: Unknown domain intelligence — what's in the Unknown bucket?
+fn run_inspect_unknown(paths: Vec<String>, depth: usize, json: bool, verbose: bool) {
+    let ctx = RunContext::new("dev");
+    let roots = resolve_roots(paths);
+    let entries = scanner::scan(&roots, depth, 1, true);
+    let threads = optimal_threads(entries.len());
+    let classified = classify(entries, &ctx, threads);
+
+    let breakdown = inspect::analyze(&classified);
+
+    if json {
+        println!("{}", inspect::render_json(&breakdown));
+        return;
+    }
+
+    println!("{}", inspect::render_report(&breakdown));
+
+    if verbose {
+        // Show near-miss: files that have engine_category but low confidence
+        let near_miss: Vec<_> = classified
+            .iter()
+            .filter(|f| {
+                !f.engine_category.is_empty()
+                    && f.engine_category != "Unknown"
+                    && f.engine_confidence < 30
+            })
+            .take(20)
+            .collect();
+        if !near_miss.is_empty() {
+            println!(
+                "\nNEAR MISS (classified but low confidence)\n{}",
+                "─".repeat(40)
+            );
+            for f in &near_miss {
+                println!(
+                    "  {}  confidence: {}%  → {}",
+                    f.engine_category, f.engine_confidence, f.path
+                );
+            }
+        }
+    }
 }
 
 fn run_undo(id: Option<String>) {

@@ -115,4 +115,19 @@ pub enum Command {
         id: Option<String>,
     },
     Status,
+
+    /// Analyze unknown files — what dominates the Unknown bucket?
+    InspectUnknown {
+        /// Scan root(s), defaults to auto-detect
+        #[arg(short, long, num_args = 0..)]
+        paths: Vec<String>,
+        #[arg(short, long, default_value = "0")]
+        depth: usize,
+        /// JSON export for analysis
+        #[arg(long)]
+        json: bool,
+        /// Show near-miss classifications (debugging)
+        #[arg(long)]
+        verbose: bool,
+    },
 }
