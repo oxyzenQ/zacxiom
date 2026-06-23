@@ -335,9 +335,7 @@ fn build_rules() -> Vec<Rule> {
         // ═══════════════════════════════════════════════════════
         Rule {
             name: "cache-build-cargo",
-            matches: |_, lower| {
-                lower.contains("/.cargo/registry/") || lower.contains("/.cargo/git/")
-            },
+            matches: |_, lower| lower.contains("/.cargo/git/") || lower.ends_with("/.cargo/git"),
             category: Category::BuildCache,
             risk_level: RiskLevel::Minimal,
             regenerable: true,
@@ -506,7 +504,9 @@ fn build_rules() -> Vec<Rule> {
         },
         Rule {
             name: "app-cargo-registry",
-            matches: |_, lower| lower.contains("/.cargo/registry/"),
+            matches: |_, lower| {
+                lower.contains("/.cargo/registry/") || lower.ends_with("/.cargo/registry")
+            },
             category: Category::DownloadedArtifact,
             risk_level: RiskLevel::Low,
             regenerable: true,
