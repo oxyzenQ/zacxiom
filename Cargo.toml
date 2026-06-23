@@ -1,6 +1,6 @@
 [package]
 name = "zacxiom"
-version = "6.3.0"
+version = "6.3.1"
 edition = "2021"
 authors = ["rezky_nightky <with dot rezky at gmail dot com>"]
 description = "Filesystem Intelligence Engine for Linux — Observe → Understand → Decide → Act"

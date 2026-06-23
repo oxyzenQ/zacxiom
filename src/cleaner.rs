@@ -109,6 +109,8 @@ mod tests {
             risk_score: 0.0,
             risk_reasons: vec!["test".into()],
             decision,
+            engine_category: String::new(),
+            engine_confidence: 0,
         }
     }
 

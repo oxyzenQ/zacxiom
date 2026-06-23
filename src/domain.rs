@@ -235,6 +235,8 @@ mod tests {
             risk_score: risk,
             risk_reasons: vec!["test".into()],
             decision,
+            engine_category: String::new(),
+            engine_confidence: 0,
         }
     }
 

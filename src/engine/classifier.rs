@@ -43,7 +43,7 @@ pub fn classify(path: &Path) -> ClassificationResult {
         result.confidence += 0.3;
     }
 
-    if metadata::is_executable(path) && !path_str.ends_with(".sh") {
+    if metadata::is_regular_executable(path) && !path_str.ends_with(".sh") {
         result.reasons.push("Executable permission set".into());
         result.confidence += 0.1;
     }

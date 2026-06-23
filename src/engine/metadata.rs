@@ -19,8 +19,12 @@ pub fn is_elf_binary(path: &Path) -> bool {
     }
 }
 
-/// Check if a file has the executable bit set.
-pub fn is_executable(path: &Path) -> bool {
+/// Check if a regular file has the executable bit set.
+/// Directories always have +x on Linux — skipped intentionally.
+pub fn is_regular_executable(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
     if let Ok(meta) = fs::metadata(path) {
         let mode = meta.permissions().mode();
         mode & 0o111 != 0

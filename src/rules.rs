@@ -87,6 +87,12 @@ pub struct ClassifiedFile {
     pub risk_score: f64,
     pub risk_reasons: Vec<String>,
     pub decision: Decision,
+    /// Engine classification category (v6.3.1 bridge).
+    #[serde(default)]
+    pub engine_category: String,
+    /// Engine confidence score 0-100 (v6.3.1 bridge).
+    #[serde(default)]
+    pub engine_confidence: u8,
 }
 
 /// H2: Protected paths — hard-coded, NEVER removable.

@@ -149,6 +149,8 @@ pub fn score_v3(signals: &RiskSignals) -> ClassifiedFile {
             risk_score: 1.0,
             risk_reasons: vec!["system-owned, unknown cache domain — protected".into()],
             decision: Decision::Protected,
+            engine_category: String::new(),
+            engine_confidence: 0,
         };
     }
 
@@ -160,6 +162,8 @@ pub fn score_v3(signals: &RiskSignals) -> ClassifiedFile {
         risk_score: score,
         risk_reasons: reasons,
         decision,
+        engine_category: String::new(),
+        engine_confidence: 0,
     }
 }
 

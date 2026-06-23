@@ -51,9 +51,9 @@ pub fn score(result: &mut ClassificationResult, path: &Path, lower: &str) {
         score += 15;
         reasons.push("✓ ELF binary detected".into());
     }
-    if super::metadata::is_executable(path) {
+    if super::metadata::is_regular_executable(path) {
         score += 8;
-        reasons.push("✓ Executable permission set".into());
+        reasons.push("✓ Executable file detected".into());
     }
     if let Some(_size) = super::metadata::file_size(path) {
         // Known file size = we could read metadata

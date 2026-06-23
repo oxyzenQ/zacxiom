@@ -432,6 +432,10 @@ fn classify(
                             ctx.memory.sessions
                         ));
                     }
+                    // v6.3.1: bridge — run engine classification alongside legacy
+                    let eng = crate::engine::classify(&e.path);
+                    scored.engine_category = eng.category.display().to_string();
+                    scored.engine_confidence = eng.confidence_score;
                     counter.fetch_add(1, Ordering::Relaxed);
                     scored
                 })

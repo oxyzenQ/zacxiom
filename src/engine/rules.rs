@@ -126,7 +126,53 @@ pub fn rule_database() -> Vec<Rule> {
             reason: "Home directory — contains mixed personal data and cache",
         },
         // ═══════════════════════════════════════════════════════
-        // LAYER 3: Security credentials — never touch
+        // LAYER 3.5: User-installed software — protected
+        // ═══════════════════════════════════════════════════════
+        Rule {
+            name: "user-bin",
+            matches: |_, lower| {
+                lower.contains("/.local/bin/") && !lower.ends_with("/.local/bin/")
+                    || lower.contains("/.cargo/bin/") && !lower.ends_with("/.cargo/bin/")
+            },
+            category: Category::SystemBinary,
+            risk_level: RiskLevel::Critical,
+            regenerable: false,
+            reason: "User-installed binary — removing breaks locally installed software",
+        },
+        Rule {
+            name: "user-bin-dir",
+            matches: |_, lower| lower.ends_with("/.local/bin") || lower.ends_with("/.cargo/bin"),
+            category: Category::SystemBinary,
+            risk_level: RiskLevel::Critical,
+            regenerable: false,
+            reason: "User software directory — contains locally installed executables",
+        },
+        // ═══════════════════════════════════════════════════════
+        // LAYER 3.6: Version control — never clean
+        // ═══════════════════════════════════════════════════════
+        Rule {
+            name: "vcs-git",
+            matches: |_, lower| lower.contains("/.git/") || lower.ends_with("/.git"),
+            category: Category::SystemData,
+            risk_level: RiskLevel::Critical,
+            regenerable: false,
+            reason: "Git repository data — deleting corrupts the repository. Not regenerable.",
+        },
+        Rule {
+            name: "vcs-svn-hg",
+            matches: |_, lower| {
+                lower.contains("/.svn/")
+                    || lower.ends_with("/.svn")
+                    || lower.contains("/.hg/")
+                    || lower.ends_with("/.hg")
+            },
+            category: Category::SystemData,
+            risk_level: RiskLevel::Critical,
+            regenerable: false,
+            reason: "Version control metadata — deleting corrupts the working copy",
+        },
+        // ═══════════════════════════════════════════════════════
+        // LAYER 4: Security credentials (was L3) — never touch
         // ═══════════════════════════════════════════════════════
         Rule {
             name: "sec-ssh",
