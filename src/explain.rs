@@ -1,13 +1,14 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Explainability engine v3 — accurate path-aware domain detection.
+//! Explainability engine v4 — pure presentation layer.
 //!
-//! v6.2.4: Fixed file-vs-directory detection, user directory handling,
-//! .cache classification, and accurate path resolution.
-//! No more "21 GB .zshrc" hallucinations.
+//! v6.2.5: Classification logic moved to `zacxiom-engine`.
+//! explain.rs is now presentation-only: consumes ClassificationResult, renders cards.
+//! No path matching. No if/else chains. No domain detection.
 
 use crate::confidence::{confidence, Tier};
+use crate::engine::{Category, ClassificationResult};
 use crate::rules::ClassifiedFile;
 use crate::simulator;
 
@@ -23,567 +24,238 @@ pub struct Explanation {
     pub file_count: Option<usize>,
 }
 
-/// Determine what domain a path belongs to, then explain it.
+/// Generate an explanation from classified files and engine results.
 pub fn explain_path(path: &str, classified: &[ClassifiedFile]) -> Explanation {
+    // Use the engine to classify this path
+    let eng_result = crate::engine::classify(std::path::Path::new(path));
+
     let tier = if classified.is_empty() {
-        Tier::Maximum
+        category_to_tier(&eng_result.category)
     } else {
         classified
             .iter()
             .map(confidence)
             .max()
-            .unwrap_or(Tier::Maximum)
+            .unwrap_or(category_to_tier(&eng_result.category))
     };
 
     let total_size: u64 = classified.iter().map(|f| f.size).sum();
-    let domain_name = infer_domain_name(path, classified);
 
-    explain_domain(&domain_name, total_size, tier, classified.len())
+    explain_domain(&eng_result, total_size, tier, classified.len())
 }
 
-/// Infer a human-readable domain name from a path.
-/// v6.2.4: Priority-ordered — system paths checked FIRST, keywords LAST.
-fn infer_domain_name(path: &str, classified: &[ClassifiedFile]) -> String {
-    let lower = path.to_lowercase();
+/// Convert engine Category to confidence Tier.
+fn category_to_tier(cat: &Category) -> Tier {
+    match cat {
+        Category::SystemBinary
+        | Category::SystemConfiguration
+        | Category::SystemData
+        | Category::VirtualFilesystem
+        | Category::SecurityCredential => Tier::Protected,
 
-    // ═══════════════════════════════════════════════════════════
-    // PRIORITY 1: System paths — MUST be checked before keywords
-    // ═══════════════════════════════════════════════════════════
+        Category::UserHomeRoot
+        | Category::UserDocument
+        | Category::UserMedia
+        | Category::UserDesktop
+        | Category::ShellConfiguration => Tier::Minimal,
 
-    // System executables — never cache, never cleanable
-    if lower.starts_with("/usr/bin/")
-        || lower == "/usr/bin"
-        || lower.starts_with("/usr/local/bin/")
-        || lower == "/usr/local/bin"
-        || lower.starts_with("/bin/")
-        || lower == "/bin"
-        || lower.starts_with("/sbin/")
-        || lower == "/sbin"
-        || lower.starts_with("/usr/sbin/")
-        || lower == "/usr/sbin"
-        || lower.starts_with("/opt/") && !lower.contains("/cache")
-    {
-        return "System Binary".into();
-    }
+        Category::ApplicationConfiguration
+        | Category::EnvironmentFile
+        | Category::ApplicationData => Tier::Moderate,
 
-    // System configuration — never cache
-    if lower.starts_with("/etc/") || lower == "/etc" {
-        return "System Configuration".into();
-    }
-
-    // System library / boot — never cache
-    if lower.starts_with("/lib/")
-        || lower == "/lib"
-        || lower.starts_with("/lib64/")
-        || lower == "/lib64"
-        || lower.starts_with("/boot/")
-        || lower == "/boot"
-        || lower.starts_with("/usr/lib/")
-        || lower.starts_with("/usr/share/")
-    {
-        return "System Data".into();
-    }
-
-    // Device / proc / sys — never touch
-    if lower.starts_with("/dev/") || lower.starts_with("/proc/") || lower.starts_with("/sys/") {
-        return "System Virtual Filesystem".into();
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // PRIORITY 2: User home root — special handling
-    // ═══════════════════════════════════════════════════════════
-
-    // Exact home directory match (e.g. "/home/user" or "/root")
-    // Matches paths like "/home/rezky" exactly, not "/home/rezky/.cache"
-    if lower.matches('/').count() <= 2 && (lower.starts_with("/home/") || lower == "/root") {
-        return "User Home Directory".into();
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // PRIORITY 3: Security-critical paths
-    // ═══════════════════════════════════════════════════════════
-
-    if lower.contains(".ssh") {
-        return "SSH Keys & Credentials".into();
-    }
-    if lower.contains(".gnupg") || lower.contains(".gpg") {
-        return "GPG Keys".into();
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // PRIORITY 4: Regular files — classify by extension/path
-    // ═══════════════════════════════════════════════════════════
-
-    if !path.ends_with('/') {
-        // It's a file (or at least not explicitly a directory)
-        if lower.ends_with(".zshrc")
-            || lower.ends_with(".bashrc")
-            || lower.ends_with(".profile")
-            || lower.ends_with(".bash_profile")
-            || lower.ends_with(".zprofile")
-            || lower.contains("/.zshrc")
-        {
-            return "Shell Config File".into();
+        Category::Cache | Category::DockerStorage | Category::GameData | Category::AIModelCache => {
+            Tier::High
         }
-        if lower.contains(".gitconfig") || lower.contains(".git-credentials") {
-            return "Git Config File".into();
-        }
-        if lower.ends_with(".toml")
-            || lower.ends_with(".yaml")
-            || lower.ends_with(".json")
-            || lower.ends_with(".ini")
-            || lower.ends_with(".conf")
-        {
-            return "Configuration File".into();
-        }
-        if lower.ends_with(".env") || lower.contains(".env.") {
-            return "Environment Config File".into();
-        }
-        if lower.ends_with(".pub") || lower.ends_with(".pem") || lower.ends_with(".key") {
-            return "Key File".into();
-        }
-        if lower.contains(".ssh/") {
-            return "SSH Key/Config File".into();
-        }
-    }
 
-    // ── User directories (never cache, never auto-clean) ───────
-    if lower.contains("/desktop") && !lower.contains("/desktop/") {
-        return "User Desktop".into();
-    }
-    if lower.contains("/documents") && !lower.contains("/documents/") {
-        return "User Documents".into();
-    }
-    if lower.contains("/music") && !lower.contains("/music/") {
-        return "User Music".into();
-    }
-    if lower.contains("/pictures") && !lower.contains("/pictures/") {
-        return "User Pictures".into();
-    }
-    if lower.contains("/videos") && !lower.contains("/videos/") {
-        return "User Videos".into();
-    }
-    if lower.contains("/downloads") && !lower.contains("/downloads/") {
-        return "Downloads Directory".into();
-    }
-    if lower.contains("/public") && !lower.contains("/public/") {
-        return "Public Directory".into();
-    }
-    if lower.contains("/templates") && !lower.contains("/templates/") {
-        return "Templates Directory".into();
-    }
+        Category::BuildCache
+        | Category::PackageCache
+        | Category::BrowserCache
+        | Category::TemporaryFile => Tier::Maximum,
 
-    // ── Cache directory (explicit — IS cache, NOT user data) ──
-    if lower.ends_with("/.cache") || lower.contains("/.cache/") {
-        return "User Cache".into();
+        Category::Unknown => Tier::Moderate,
     }
-
-    // ── Configuration directories ──────────────────────────────
-    if lower.ends_with("/.config") {
-        return "Configuration Directory".into();
-    }
-    if lower.contains("/.config/") && !lower.contains("/cache") {
-        return "Application Configuration".into();
-    }
-
-    // ── Protected user data ───────────────────────────────────
-    if lower.contains(".local/share") {
-        return "User Application Data".into();
-    }
-    if lower.contains("wallet") || lower.contains("password") || lower.contains("keyring") {
-        return "Credentials & Secrets".into();
-    }
-    if lower.contains("mozilla") && lower.contains("profile") {
-        return "Firefox Profile".into();
-    }
-
-    // ── Use classified file's domain if available ──────────────
-    if let Some(f) = classified.first() {
-        let d = format!("{:?}", f.cache_domain);
-        if d != "Unknown" {
-            return d;
-        }
-    }
-
-    // ── Tooling-specific paths ─────────────────────────────────
-    if lower.contains(".cargo") || lower.contains("cargo") {
-        return "Cargo Registry".into();
-    }
-    if lower.contains("rustup") {
-        return "Rustup Toolchains".into();
-    }
-    if lower.contains(".npm") || lower.contains("npm") {
-        return "npm Package Cache".into();
-    }
-    if lower.contains("pip") || lower.contains(".cache/pip") {
-        return "pip Package Cache".into();
-    }
-    if lower.contains(".cache/uv") {
-        return "uv Cache".into();
-    }
-    if lower.contains("docker") || lower.contains("containerd") {
-        return "Docker Storage".into();
-    }
-    if lower.contains("steam") {
-        return "Steam Game Cache".into();
-    }
-    if lower.contains("proton") || lower.contains("compatdata") {
-        return "Proton Compatibility Data".into();
-    }
-    if lower.contains("firefox") || lower.contains("mozilla") {
-        return "Firefox Browser Cache".into();
-    }
-    if lower.contains("chrome") || lower.contains("chromium") {
-        return "Chrome Browser Cache".into();
-    }
-    if lower.contains("brave") {
-        return "Brave Browser Cache".into();
-    }
-    if lower.contains("discord") {
-        return "Discord App Cache".into();
-    }
-    if lower.contains("vscode") {
-        return "VS Code Cache".into();
-    }
-    if lower.contains("huggingface") || lower.contains("hf.co") {
-        return "HuggingFace Model Cache".into();
-    }
-    if lower.contains("ollama") {
-        return "Ollama Model Storage".into();
-    }
-    if lower.contains("gradle") {
-        return "Gradle Build Cache".into();
-    }
-    if lower.contains(".m2") || lower.contains("maven") {
-        return "Maven Repository".into();
-    }
-    if lower.contains("node_modules") {
-        return "Node.js Dependencies".into();
-    }
-    if lower.contains("trash") {
-        return "Desktop Trash".into();
-    }
-
-    // ── Fallback ───────────────────────────────────────────────
-    path.trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .map(|s| {
-            if s.is_empty() || s == "." || s == ".." {
-                path.to_string()
-            } else {
-                s.to_string()
-            }
-        })
-        .unwrap_or_else(|| path.to_string())
 }
 
-/// Generate a domain-level explanation.
-pub fn explain_domain(domain: &str, total_size: u64, tier: Tier, file_count: usize) -> Explanation {
-    let lower = domain.to_lowercase();
-    let (what, why, consequence, recommendation) = match_domain_explanation(&lower, domain, &tier);
+/// Generate a domain-level explanation from an engine result.
+pub fn explain_domain(
+    eng: &ClassificationResult,
+    total_size: u64,
+    tier: Tier,
+    file_count: usize,
+) -> Explanation {
+    let (what, why, consequence, recommendation) = render_category(&eng.category, eng);
 
     Explanation {
-        title: domain.to_string(),
+        title: eng.category.display().to_string(),
         what: what.to_string(),
         size: simulator::human_size(total_size),
         tier,
         why_safe: why.to_string(),
         consequence: consequence.to_string(),
-        recommendation: match recommendation {
-            Some(r) => r.to_string(),
-            None => match tier {
-                Tier::Maximum => "Safe to reclaim if disk space needed.".into(),
-                Tier::High => "Safe with review. Use `zacxiom clean --smart`.".into(),
-                Tier::Moderate => {
-                    "Review recommended. Use `zacxiom clean --force` after review.".into()
-                }
-                Tier::Low | Tier::Minimal => "Manual review required. Do not auto-clean.".into(),
-                Tier::Protected => "Will never be cleaned automatically by Zacxiom.".into(),
-            },
-        },
+        recommendation: recommendation
+            .unwrap_or_else(|| default_recommendation(&tier))
+            .to_string(),
         file_count: Some(file_count),
     }
 }
 
-fn match_domain_explanation(
-    lower: &str,
-    _domain: &str,
-    _tier: &Tier,
-) -> (
-    &'static str,
-    &'static str,
-    &'static str,
-    Option<&'static str>,
-) {
-    // ── SYSTEM: Never cleanable ───────────────────────────────
-    if lower.contains("system binary") {
-        return (
+fn render_category(
+    cat: &Category,
+    eng: &ClassificationResult,
+) -> (&'static str, String, String, Option<String>) {
+    let reasons = eng.reasons.join("; ");
+
+    match cat {
+        Category::SystemBinary => (
             "Installed application executable or binary.",
-            "This is an installed program, not cache or data. Never deletable. Removing it breaks installed software.",
-            "The application would stop working. May require reinstallation.",
-            Some("Never delete. This is installed software."),
-        );
-    }
-    if lower.contains("system configuration") && !lower.contains("app") {
-        return (
+            format!("This is an installed program, not cache or data. Never deletable. {}", reasons),
+            "The application would stop working. May require reinstallation.".into(),
+            Some("Never delete. This is installed software.".into()),
+        ),
+        Category::SystemConfiguration => (
             "System-wide configuration file (located in /etc or equivalent).",
-            "These files control system behavior — environment variables, service settings, network config. Never auto-clean.",
-            "System services or environment may break. Could prevent boot or login.",
-            Some("Never delete system configuration files."),
-        );
-    }
-    if lower.contains("system data") && !lower.contains("user") {
-        return (
+            format!("These files control system behavior. Never auto-clean. {}", reasons),
+            "System services or environment may break. Could prevent boot or login.".into(),
+            Some("Never delete system configuration files.".into()),
+        ),
+        Category::SystemData => (
             "System library, shared resource, or boot data.",
-            "Part of the operating system or installed packages. Never deletable.",
-            "Applications or the system itself may fail.",
-            Some("Never delete system libraries or data."),
-        );
-    }
-    if lower.contains("system virtual") {
-        return (
+            format!("Part of the operating system or installed packages. {}", reasons),
+            "Applications or the system itself may fail.".into(),
+            Some("Never delete system libraries or data.".into()),
+        ),
+        Category::VirtualFilesystem => (
             "Virtual kernel filesystem (proc/sys/dev). Not real files.",
-            "These are kernel interfaces, not files on disk. They use zero actual storage. Never touch.",
-            "System instability, kernel panics, or device malfunction.",
-            Some("Never interact with virtual filesystems."),
-        );
-    }
-    if lower.contains("user home") {
-        return (
+            "These are kernel interfaces, not files on disk. They use zero actual storage. Never touch.".into(),
+            "System instability, kernel panics, or device malfunction.".into(),
+            Some("Never interact with virtual filesystems.".into()),
+        ),
+        Category::UserHomeRoot => (
             "Your home directory — contains all personal files, projects, configs, downloads, and caches.",
-            "The home directory contains a mix of important files AND cache. Zacxiom scans subdirectories individually — never clean the entire home directory.",
-            "Personal files, projects, and configuration would be permanently lost.",
-            Some("Never clean entire home directory. Use `zacxiom scan` to find specific cache locations."),
-        );
-    }
-
-    // ── Protected / User data — accurate warnings ──────────────
-    if lower.contains("shell config") || lower.contains(".zshrc") || lower.contains(".bashrc") {
-        return (
-            "Shell configuration file — defines your terminal environment, aliases, and PATH settings.",
-            "This is a configuration file, not cache. It contains your personal shell customizations. Manual review only.",
-            "Deleting this file resets your shell environment to defaults. Custom aliases, PATH, and prompt settings are lost.",
-            Some("Do not auto-delete. Review manually before removing."),
-        );
-    }
-    if lower.contains("config file") && !lower.contains("application") {
-        return (
-            "Configuration file — application or system settings.",
-            "Contains customized settings. Not regenerable. Manual review required.",
-            "Application or system settings reset to defaults.",
-            Some("Do not auto-delete. Manual review only."),
-        );
-    }
-    if lower.contains("key file")
-        || lower.contains("credential")
-        || lower.contains("ssh")
-        || lower.contains("gpg")
-    {
-        return (
+            "The home directory contains a mix of important files AND cache. Zacxiom scans subdirectories individually — never clean the entire home directory.".into(),
+            "Personal files, projects, and configuration would be permanently lost.".into(),
+            Some("Never clean entire home directory. Use `zacxiom scan` to find specific cache locations.".into()),
+        ),
+        Category::SecurityCredential => (
             "Security credential, key, or identity file.",
-            "These are cryptographic identities and access credentials. Never auto-clean. Loss means permanent loss of access.",
-            "Deleting keys permanently removes access to systems or encrypted data. Cannot be regenerated.",
-            Some("Never delete without understanding consequences."),
-        );
-    }
-    if lower.contains("user desktop")
-        || lower.contains("documents")
-        || lower.contains("music")
-        || lower.contains("pictures")
-        || lower.contains("videos")
-        || lower.contains("templates")
-        || lower.contains("public dir")
-    {
-        return (
-            "Personal files and user content — documents, media, or desktop files.",
-            "These are your personal files. Zacxiom does NOT auto-clean user content. Review before deleting anything here.",
-            "Personal files would be permanently deleted. Not recoverable from cache or cloud.",
-            Some("Never auto-cleaned. Review each file before deleting."),
-        );
-    }
-    if lower.contains("downloads") {
-        return (
-            "Files in your Downloads directory.",
-            "These are files you downloaded. Some may be important, others are old ISOs/installers. Review before deleting.",
-            "Files will be permanently deleted. Review the list carefully.",
-            Some("Manual review required. Old installers are usually safe."),
-        );
-    }
-    if lower.contains("firefox profile") || lower.contains("chrome profile") {
-        return (
-            "Browser profile — bookmarks, history, saved passwords, extensions.",
-            "Contains personal browsing data that cannot be regenerated. Never auto-clean.",
-            "Bookmarks, saved passwords, and browsing history permanently lost.",
-            Some("Never auto-clean browser profiles."),
-        );
-    }
-    if lower.contains("config") && !lower.contains("cache") && !lower.contains("application") {
-        return (
-            "Application configuration files and user preferences.",
-            "Contains your customized settings. Most apps recreate defaults if deleted, but customizations are lost.",
-            "Apps reset to factory defaults. Custom settings and preferences are lost.",
-            Some("Review before deleting. Settings will be lost."),
-        );
-    }
-
-    // ── Caches — accurate safety ───────────────────────────────
-    if lower.contains("user cache") || (lower.contains("cache") && !lower.contains("config")) {
-        return (
+            format!("These are cryptographic identities. Never auto-clean. {}", reasons),
+            "Deleting keys permanently removes access to systems or encrypted data. Cannot be regenerated.".into(),
+            Some("Never delete without understanding consequences.".into()),
+        ),
+        Category::UserDocument => (
+            "Personal documents and downloaded files.",
+            "These are your personal files — may contain irreplaceable content. Zacxiom does NOT auto-clean user content.".into(),
+            "Personal documents would be permanently deleted. Not recoverable from cache or cloud.".into(),
+            Some("Never auto-cleaned. Review each file before deleting.".into()),
+        ),
+        Category::UserMedia => (
+            "Personal media files — music, pictures, videos.",
+            "Your media library. Not cache. Review before deleting anything here.".into(),
+            "Media files permanently deleted.".into(),
+            Some("Never auto-cleaned. Manual review only.".into()),
+        ),
+        Category::UserDesktop => (
+            "Desktop files — your primary workspace.",
+            "Contains files you intentionally placed on your desktop. Not cache.".into(),
+            "Desktop files permanently deleted.".into(),
+            Some("Never auto-cleaned. Review manually.".into()),
+        ),
+        Category::ShellConfiguration => (
+            "Shell configuration file — defines your terminal environment, aliases, and PATH.",
+            "This is a configuration file, not cache. Contains your personal shell customizations.".into(),
+            "Deleting resets shell environment to defaults. Custom aliases, PATH, and prompt settings are lost.".into(),
+            Some("Do not auto-delete. Review manually before removing.".into()),
+        ),
+        Category::ApplicationConfiguration => (
+            "Application configuration file — settings and preferences.",
+            "Contains customized settings. Most apps recreate defaults if deleted, but customizations are lost.".into(),
+            "Apps reset to factory defaults. Custom settings and preferences are lost.".into(),
+            Some("Review before deleting. Settings will be lost.".into()),
+        ),
+        Category::EnvironmentFile => (
+            "Environment variables file — may contain secrets and API keys.",
+            "These files define environment variables for applications. May contain sensitive values.".into(),
+            "Environment variables reset, applications may fail to configure correctly.".into(),
+            Some("Review carefully before deleting.".into()),
+        ),
+        Category::Cache => (
             "User application cache data — temporary files stored by desktop and CLI applications.",
-            "Applications rebuild their cache automatically. This is designed to be safe to remove. Zacxiom's primary target.",
-            "Applications may take slightly longer to start or reload content until caches rebuild.",
-            None, // Use default tier-based recommendation
-        );
-    }
-    if lower.contains("browser") && lower.contains("cache") {
-        return (
+            format!("Applications rebuild their cache automatically. Safe to remove. {}", reasons),
+            "Applications may take slightly longer to start or reload content until caches rebuild.".into(),
+            None,
+        ),
+        Category::BuildCache => (
+            "Build tool cache — compiled artifacts, dependency downloads.",
+            format!("Build tools regenerate these automatically. Safe to remove. {}", reasons),
+            "Next build may take longer while artifacts are regenerated.".into(),
+            None,
+        ),
+        Category::PackageCache => (
+            "Package manager download cache.",
+            format!("Package managers re-download from their registries. {}", reasons),
+            "Next install/update may take longer while packages re-download.".into(),
+            None,
+        ),
+        Category::BrowserCache => (
             "Browser cache, temporary internet files, and service worker storage.",
-            "Browsers rebuild their cache automatically as you browse. No bookmarks, passwords, or settings are affected.",
-            "Websites may load slightly slower on first visit until the cache rebuilds.",
+            "Browsers rebuild their cache automatically as you browse. No bookmarks, passwords, or settings are affected.".into(),
+            "Websites may load slightly slower on first visit until the cache rebuilds.".into(),
             None,
-        );
-    }
-    if lower.contains("cargo") && !lower.contains("config") {
-        return (
-            "Downloaded Rust crate files used by Cargo for building projects.",
-            "Cargo automatically re-downloads missing crates on the next `cargo build`. No code or data lost.",
-            "Next `cargo build` may spend 2-5 minutes downloading crates.",
+        ),
+        Category::TemporaryFile => (
+            "Temporary file — designed to be cleaned.",
+            "These files were created for temporary use. Safe to remove.".into(),
+            "No impact. These files were intended to be temporary.".into(),
             None,
-        );
-    }
-    if lower.contains("rustup") || lower.contains("toolchain") {
-        return (
-            "Installed Rust toolchain components downloaded by rustup.",
-            "rustup re-downloads toolchains on `rustup update`. Only old/unused versions are targeted.",
-            "Version-specific builds may need the toolchain re-downloaded. Active toolchain is safe.",
-            None,
-        );
-    }
-    if lower.contains("docker") || lower.contains("container") {
-        return (
+        ),
+        Category::ApplicationData => (
+            "User application data — saved states, databases, user-generated content.",
+            "This is where applications store your actual data. Review file-by-file before deleting.".into(),
+            "Application data may be permanently lost. Some apps sync to cloud, others do not.".into(),
+            Some("Manual review required before cleaning.".into()),
+        ),
+        Category::DockerStorage => (
             "Docker image layers, build cache, and container storage.",
-            "Docker rebuilds images from Dockerfiles. Running containers are NOT affected.",
-            "Next `docker build` will rebuild layers from cache or Dockerfile.",
+            "Docker rebuilds images from Dockerfiles. Running containers are NOT affected.".into(),
+            "Next `docker build` will rebuild layers from cache or Dockerfile.".into(),
             None,
-        );
-    }
-    if lower.contains("ai")
-        || lower.contains("ml")
-        || lower.contains("model")
-        || lower.contains("huggingface")
-        || lower.contains("ollama")
-    {
-        return (
+        ),
+        Category::GameData => (
+            "Game compatibility data and shader caches.",
+            "Steam and Proton regenerate these when launching games. Game saves are separate.".into(),
+            "Games may take longer to launch first time. Game saves should be unaffected.".into(),
+            None,
+        ),
+        Category::AIModelCache => (
             "Downloaded AI/ML model files (HuggingFace, Ollama, Torch, etc.).",
-            "Models can be re-downloaded from their sources. Checkpoints may have training value — review before deleting.",
-            "Models will re-download when needed. Training checkpoints are permanently deleted.",
-            Some("Review checkpoints carefully. Models can be re-downloaded."),
-        );
+            "Models can be re-downloaded from their sources. Training checkpoints are permanently deleted — review carefully.".into(),
+            "Models will re-download when needed. Checkpoints are lost permanently.".into(),
+            Some("Review checkpoints carefully. Models can be re-downloaded.".into()),
+        ),
+        Category::Unknown => (
+            "Storage that may be safe to clean after review.",
+            format!("No strong risk signals detected, but verify before deleting. {}", reasons),
+            "Verify the specific files before proceeding.".into(),
+            Some("Review manually before cleaning.".into()),
+        ),
     }
-    if lower.contains("npm") || lower.contains("yarn") || lower.contains("pnpm") {
-        return (
-            "Cached JavaScript/TypeScript packages.",
-            "Package managers re-download from the registry on `npm install`. This is a network cache.",
-            "Next install may take longer while packages re-download.",
-            None,
-        );
-    }
-    if lower.contains("pip") || lower.contains("python") || lower.contains("uv") {
-        return (
-            "Downloaded Python packages cached by pip or uv.",
-            "pip/uv re-downloads packages from PyPI. Virtual environments are separate.",
-            "Next `pip install` may take longer. Virtual environments are unaffected.",
-            None,
-        );
-    }
-    if lower.contains("gradle") || lower.contains("maven") {
-        return (
-            "Java/Kotlin build dependencies and build cache.",
-            "Gradle/Maven re-download dependencies. Source code is not affected.",
-            "Next build may take longer to download dependencies.",
-            None,
-        );
-    }
-    if lower.contains("steam") && lower.contains("shader") {
-        return (
-            "Pre-compiled GPU shader cache for Steam games.",
-            "Shaders regenerate automatically when the game launches. No game data affected.",
-            "Games may have slightly lower FPS for the first few minutes.",
-            None,
-        );
-    }
-    if lower.contains("proton") || lower.contains("compat") {
-        return (
-            "Proton/Wine compatibility data for Steam games (Windows emulation layer).",
-            "Steam reinstalls Proton prefixes when launching games. Game saves are typically in Steam Cloud.",
-            "Games may take longer to launch first time. Game saves should be unaffected.",
-            None,
-        );
-    }
-    if lower.contains("dxvk") || lower.contains("vkd3d") || lower.contains("mesa") {
-        return (
-            "GPU shader translation cache (DirectX-to-Vulkan/OpenGL).",
-            "Automatically regenerated by the GPU driver on next game launch.",
-            "Temporary performance dip for 1-5 minutes while shaders recompile.",
-            None,
-        );
-    }
-    if lower.contains("trash") {
-        return (
-            "Files you've already deleted — they're in your Trash directory.",
-            "You already chose to delete these files. The Trash is a safety net, not permanent storage.",
-            "Files will be permanently removed. Restore from file manager before cleaning if needed.",
-            None,
-        );
-    }
-    if lower.contains("node") && lower.contains("modules") {
-        return (
-            "Node.js project dependencies (node_modules).",
-            "Recreated with `npm install` from package.json. Project code is unaffected.",
-            "Next `npm install` will re-download all dependencies.",
-            None,
-        );
-    }
-    if lower.contains("package") || lower.contains("pacman") {
-        return (
-            "Downloaded system packages cached by the package manager.",
-            "The package manager re-downloads packages when needed. Installed software is NOT affected.",
-            "Future updates may take longer while packages re-download.",
-            None,
-        );
-    }
-    if lower.contains("discord") {
-        return (
-            "Discord application cache and downloaded media.",
-            "Discord re-downloads media as needed. Messages and settings are server-side.",
-            "Previously viewed images/attachments may re-download.",
-            None,
-        );
-    }
-    if lower.contains("vscode") || lower.contains("visual studio") {
-        return (
-            "VS Code editor cache, extensions cache, and workspace storage.",
-            "VS Code re-downloads extensions and rebuilds its cache. Settings are in user config, not cache.",
-            "Extensions may need to be re-downloaded. Settings and workspaces are unaffected.",
-            None,
-        );
-    }
+}
 
-    // ── Safe fallback ──────────────────────────────────────────
-    (
-        "Storage that may be safe to clean after review.",
-        "No strong risk signals detected, but verify before deleting.",
-        "Verify the specific files before proceeding.",
-        Some("Review manually before cleaning."),
-    )
+fn default_recommendation(tier: &Tier) -> String {
+    match tier {
+        Tier::Maximum => "Safe to reclaim if disk space needed.".into(),
+        Tier::High => "Safe with review. Use `zacxiom clean --smart`.".into(),
+        Tier::Moderate => "Review recommended. Use `zacxiom clean --force` after review.".into(),
+        Tier::Low | Tier::Minimal => "Manual review required. Do not auto-clean.".into(),
+        Tier::Protected => "Will never be cleaned automatically by Zacxiom.".into(),
+    }
 }
 
 /// Explain a single file (fallback when no domain match).
 pub fn explain_file(file: &ClassifiedFile) -> Explanation {
     let tier = confidence(file);
-    let domain = infer_domain_name(&file.path, std::slice::from_ref(file));
-    explain_domain(&domain, file.size, tier, 1)
+    let eng = crate::engine::classify(std::path::Path::new(&file.path));
+    explain_domain(&eng, file.size, tier, 1)
 }
 
 /// Render an explanation card — clean, readable, no box-drawing.
@@ -591,11 +263,8 @@ pub fn render_card(exp: &Explanation) -> String {
     let mut out = String::new();
     let stars = exp.tier.stars();
 
-    // Title line
     out.push_str(&format!("\n{}  {}\n", stars, exp.title));
     out.push_str(&format!("{}\n", "─".repeat(60)));
-
-    // Body
     out.push_str(&format!("  What:       {}\n", exp.what));
     out.push_str(&format!("  Size:       {}\n", exp.size));
     if let Some(n) = exp.file_count {

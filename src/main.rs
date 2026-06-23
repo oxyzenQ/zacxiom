@@ -15,6 +15,7 @@ mod color;
 mod confidence;
 mod display;
 mod domain;
+mod engine;
 mod errors;
 mod explain;
 mod history;
