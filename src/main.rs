@@ -436,6 +436,13 @@ fn classify(
                     let eng = crate::engine::classify_fast(&e.path);
                     scored.engine_category = eng.0.to_string();
                     scored.engine_confidence = eng.1;
+                    // Bridge: engine category overrides legacy Decision for expensive artifacts
+                    if eng.0.contains("Downloaded") && scored.decision == rules::Decision::Safe {
+                        scored.decision = rules::Decision::LowRisk;
+                        scored.risk_reasons.push(
+                            "Downloaded artifact: regenerable but expensive to restore".into(),
+                        );
+                    }
                     counter.fetch_add(1, Ordering::Relaxed);
                     scored
                 })
