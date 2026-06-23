@@ -443,12 +443,26 @@ fn classify(
                     let eng = crate::engine::classify_fast(&e.path);
                     scored.engine_category = eng.0.to_string();
                     scored.engine_confidence = eng.1;
-                    // Bridge: engine category overrides legacy Decision for expensive artifacts
-                    if eng.0.contains("Downloaded") && scored.decision == rules::Decision::Safe {
-                        scored.decision = rules::Decision::LowRisk;
-                        scored.risk_reasons.push(
-                            "Downloaded artifact: regenerable but expensive to restore".into(),
-                        );
+                    // Bridge: engine category overrides legacy Decision
+                    // to align semantic identity with cleanup policy.
+                    if scored.decision == rules::Decision::Safe {
+                        // Toolchain installations are regenerable but expensive
+                        // and not equivalent to disposable cache — require --smart
+                        if eng.0 == "Toolchain Installation"
+                            || eng.0 == "Toolchain Manager"
+                        {
+                            scored.decision = rules::Decision::LowRisk;
+                            scored.risk_reasons.push(
+                                "Installed toolchain: regenerable but expensive to restore, requires --smart".into(),
+                            );
+                        }
+                        // Downloaded artifacts (cargo registry, SDKs) — also need --smart
+                        else if eng.0.contains("Downloaded") {
+                            scored.decision = rules::Decision::LowRisk;
+                            scored.risk_reasons.push(
+                                "Downloaded artifact: regenerable but expensive to restore".into(),
+                            );
+                        }
                     }
                     counter.fetch_add(1, Ordering::Relaxed);
                     scored

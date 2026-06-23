@@ -74,10 +74,27 @@ impl Tier {
 }
 
 /// Compute confidence tier from a classified file.
+///
+/// v6.4.0: Engine-category-aware — semantic identity influences confidence.
+/// A file classified as "Installed Toolchain" should not get ★★★★★ Maximum
+/// even if its legacy decision is Safe and domain is Developer.
 pub fn confidence(file: &ClassifiedFile) -> Tier {
     // Protected decisions always Protected
     if matches!(file.decision, Decision::Protected) {
         return Tier::Protected;
+    }
+
+    // v6.4.0: Engine category override — align identity with confidence.
+    // Installed toolchains are not disposable cache even if legacy pipeline
+    // scored them as Safe/Developer.
+    if file.engine_category == "Toolchain Installation"
+        || file.engine_category == "Toolchain Manager"
+    {
+        return match file.decision {
+            Decision::Safe | Decision::LowRisk => Tier::High, // ★★★★ — requires --smart
+            Decision::Moderate => Tier::Moderate,
+            _ => Tier::Low,
+        };
     }
 
     // Decision-based mapping with domain awareness
@@ -243,5 +260,63 @@ mod tests {
         assert_eq!(s.moderate, 1);
         assert_eq!(s.low, 1);
         assert_eq!(s.protected, 1);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v6.4.0: Toolchain policy tests
+    // ═══════════════════════════════════════════════════════════
+
+    fn file_with_engine(
+        domain: CacheDomain,
+        decision: Decision,
+        engine_cat: &str,
+    ) -> ClassifiedFile {
+        ClassifiedFile {
+            path: "/test/path".into(),
+            size: 1000,
+            cache_domain: domain,
+            ownership: Ownership::User { uid: 1000 },
+            risk_score: 0.0,
+            risk_reasons: vec![],
+            decision,
+            engine_category: engine_cat.to_string(),
+            engine_confidence: 0,
+        }
+    }
+
+    #[test]
+    fn test_toolchain_installation_not_maximum() {
+        // Toolchain installation should NOT get ★★★★★ Maximum
+        let f = file_with_engine(
+            CacheDomain::Developer,
+            Decision::LowRisk,
+            "Toolchain Installation",
+        );
+        assert_ne!(confidence(&f), Tier::Maximum);
+        assert_eq!(confidence(&f), Tier::High); // ★★★★ — requires --smart
+    }
+
+    #[test]
+    fn test_toolchain_manager_not_maximum() {
+        let f = file_with_engine(CacheDomain::Developer, Decision::Safe, "Toolchain Manager");
+        assert_ne!(confidence(&f), Tier::Maximum);
+        assert_eq!(confidence(&f), Tier::High); // ★★★★ — requires --smart
+    }
+
+    #[test]
+    fn test_toolchain_protected_stays_protected() {
+        let f = file_with_engine(
+            CacheDomain::System,
+            Decision::Protected,
+            "Toolchain Installation",
+        );
+        assert_eq!(confidence(&f), Tier::Protected);
+    }
+
+    #[test]
+    fn test_regular_developer_cache_still_maximum() {
+        // Regular developer cache (not toolchain) should still get ★★★★★
+        let f = file_with_engine(CacheDomain::Developer, Decision::Safe, "Build Cache");
+        assert_eq!(confidence(&f), Tier::Maximum);
     }
 }

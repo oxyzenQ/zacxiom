@@ -354,4 +354,47 @@ mod tests {
         ));
         assert_eq!(r2.category, Category::BuildCache);
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // v6.4.0: Build Artifact & Policy Refinement tests
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_bare_target_is_build_cache() {
+        // "target" without slashes must still be recognized
+        let r = classify(Path::new("target"));
+        assert_eq!(r.category, Category::BuildCache);
+        assert_eq!(r.matched_by, "cache-build-target");
+    }
+
+    #[test]
+    fn test_node_dist_is_build_cache() {
+        let r1 = classify(Path::new("dist"));
+        assert_eq!(r1.category, Category::BuildCache);
+
+        let r2 = classify(Path::new("/home/user/project/dist/bundle.js"));
+        assert_eq!(r2.category, Category::BuildCache);
+
+        let r3 = classify(Path::new("/home/user/project/.next/static/chunks/app.js"));
+        assert_eq!(r3.category, Category::BuildCache);
+    }
+
+    #[test]
+    fn test_generic_build_output_is_build_cache() {
+        let r1 = classify(Path::new("/home/user/project/build/app.o"));
+        assert_eq!(r1.category, Category::BuildCache);
+
+        let r2 = classify(Path::new("/home/user/project/out/production/app.jar"));
+        assert_eq!(r2.category, Category::BuildCache);
+
+        let r3 = classify(Path::new("/home/user/project/obj/main.obj"));
+        assert_eq!(r3.category, Category::BuildCache);
+    }
+
+    #[test]
+    fn test_toolchain_installation_is_not_unknown() {
+        let r = classify(Path::new("/home/user/.rustup/toolchains/stable-x86_64"));
+        assert_ne!(r.category, Category::Unknown);
+        assert_eq!(r.category, Category::ToolchainInstallation);
+    }
 }

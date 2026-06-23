@@ -36,6 +36,11 @@ pub fn classify(path: &Path) -> CacheDomain {
         || path_str.contains("/build/")
         || path_str.contains("/.next/")
         || path_str.contains("/dist/")
+        || path_str.contains("/.nuxt/")
+        || path_str.contains("/.output/")
+        || path_str.contains("/out/")
+        || path_str.contains("/obj/")
+        || path_str.contains("/artifacts/")
     {
         return CacheDomain::BuildArtifact;
     }

@@ -294,15 +294,15 @@ fn render_category(
         ),
         Category::ToolchainManager => (
             "Toolchain manager directory — manages installed compiler and tool versions.",
-            "Contains toolchain installations and update metadata. Redownloaded by the toolchain manager, but large and time-consuming to restore.".into(),
-            "All installed toolchains and update state are removed. Tools like rustup will need to reinstall everything.".into(),
-            Some("Safe to reclaim if disk space is critical, but reinstalling is expensive in time and bandwidth.".into()),
+            "Contains toolchain installations and update metadata. Not cache — this is installed development tooling. Regenerable but requires significant time and bandwidth to restore.".into(),
+            "All installed toolchains and update state are removed. Development tools like rustup will need to reinstall everything (potentially gigabytes).".into(),
+            Some("Not recommended for auto-clean. Use --smart to reclaim. Reinstalling is expensive.".into()),
         ),
         Category::ToolchainInstallation => (
-            "Installed compiler toolchain — the actual compiler, standard library, and tools.",
-            "Can be reinstalled by the toolchain manager, but this requires significant download time and bandwidth. Not build cache — this is installed tooling.".into(),
-            "The compiler and tools are removed. Builds will fail until the toolchain is reinstalled. Reinstall may take several minutes and hundreds of MB.".into(),
-            Some("Safe to reclaim if disk space is critical. Otherwise keep — reinstalling is expensive.".into()),
+            "Installed compiler toolchain — the actual compiler, standard library, and development tools.",
+            "Can be reinstalled by the toolchain manager, but this requires significant download time and bandwidth. This is NOT build cache — it is installed development tooling. Deleting it means your compiler disappears.".into(),
+            "The compiler and tools are removed. All builds will fail until the toolchain is reinstalled. Reinstall may take several minutes and hundreds of MB to several GB.".into(),
+            Some("Not recommended for auto-clean. Use --smart to reclaim. Otherwise keep — reinstalling is expensive.".into()),
         ),
         Category::Unknown => (
             "Storage that may be safe to clean after review.",
