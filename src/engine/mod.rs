@@ -22,5 +22,5 @@ pub mod rules;
 pub mod types;
 
 // Re-export the public API
-pub use classifier::classify;
+pub use classifier::{classify, classify_fast};
 pub use types::{Category, ClassificationResult};

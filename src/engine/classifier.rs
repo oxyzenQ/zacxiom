@@ -7,6 +7,19 @@ use super::metadata;
 use super::types::{Category, ClassificationResult, RiskLevel};
 use std::path::Path;
 
+/// Fast classification without confidence scoring (v6.3.1).
+/// Returns (category_display_string, 0) — minimal allocation for scan pipeline.
+pub fn classify_fast(path: &Path) -> (&'static str, u8) {
+    let lower = path.to_string_lossy().to_lowercase();
+    let rules = super::rules::rule_database();
+    for rule in rules {
+        if (rule.matches)(path, &lower) {
+            return (rule.category.display(), 100);
+        }
+    }
+    (Category::Unknown.display(), 0)
+}
+
 /// Classify a path using the full rule engine + metadata analysis.
 pub fn classify(path: &Path) -> ClassificationResult {
     let path_str = path.to_string_lossy();
@@ -18,10 +31,10 @@ pub fn classify(path: &Path) -> ClassificationResult {
     result.size = metadata::file_size(path);
 
     // ── Layer 1: Rule database (structured path matching) ─────
-    let rules = super::rules::rule_database();
+    let rules = super::rules::rule_database(); // cached OnceLock
     let mut matched = false;
 
-    for rule in &rules {
+    for rule in rules {
         if (rule.matches)(path, &lower) {
             result.category = rule.category;
             result.risk_level = rule.risk_level;

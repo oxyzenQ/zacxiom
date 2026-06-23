@@ -413,7 +413,7 @@ fn classify(
                 .map(|e| {
                     let d = cache::classify(&e.path);
                     let o = ownership::detect(&e.path);
-                    let path_str = e.path.to_string_lossy().to_string();
+                    let path_str = e.path.to_string_lossy().into_owned();
                     let age = risk::file_age_days(&path_str);
                     let modif = ctx.memory.risk_modifier(&path_str);
                     let mut scored = risk::score_v3(&risk::RiskSignals {
@@ -432,10 +432,10 @@ fn classify(
                             ctx.memory.sessions
                         ));
                     }
-                    // v6.3.1: bridge — run engine classification alongside legacy
-                    let eng = crate::engine::classify(&e.path);
-                    scored.engine_category = eng.category.display().to_string();
-                    scored.engine_confidence = eng.confidence_score;
+                    // v6.3.1: bridge — fast classify, zero-heap category
+                    let eng = crate::engine::classify_fast(&e.path);
+                    scored.engine_category = eng.0.to_string();
+                    scored.engine_confidence = eng.1;
                     counter.fetch_add(1, Ordering::Relaxed);
                     scored
                 })

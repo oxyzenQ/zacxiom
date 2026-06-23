@@ -8,6 +8,7 @@
 
 use super::types::{Category, RiskLevel};
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// A single classification rule.
 pub struct Rule {
@@ -21,8 +22,14 @@ pub struct Rule {
 }
 
 /// Build the full rule database in priority order.
+/// Cached via OnceLock — called once, shared across all classify() invocations.
 /// Priority: system-protected > home-critical > config > cache > app-specific > fallback.
-pub fn rule_database() -> Vec<Rule> {
+pub fn rule_database() -> &'static [Rule] {
+    static RULES: OnceLock<Vec<Rule>> = OnceLock::new();
+    RULES.get_or_init(build_rules)
+}
+
+fn build_rules() -> Vec<Rule> {
     vec![
         // ═══════════════════════════════════════════════════════
         // LAYER 1: System — non-negotiable, never cleanable
