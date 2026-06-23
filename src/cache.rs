@@ -54,6 +54,9 @@ pub fn classify(path: &Path) -> CacheDomain {
     if path_str.contains("/.cargo/registry/")
         || path_str.contains("/.cargo/git/")
         || path_str.contains("/.rustup/toolchains/")
+        || path_str.contains("/.rustup/update-hashes/")
+        || path_str == "/.rustup"
+        || path_str.ends_with("/.rustup")
         || path_str.contains("/.npm/_cacache/")
         || path_str.contains("/.cache/pip/")
         || path_str.contains("/.cache/uv/")
@@ -62,6 +65,18 @@ pub fn classify(path: &Path) -> CacheDomain {
         || path_str.contains("/.cache/pnpm/")
     {
         return CacheDomain::Developer;
+    }
+
+    // ── Project files (not cache — source code & manifests) ─────
+    if path_str.ends_with("cargo.toml")
+        || path_str.ends_with("cargo.lock")
+        || path_str.ends_with("package.json")
+        || path_str.ends_with("package-lock.json")
+        || path_str.ends_with("go.mod")
+        || path_str.ends_with("go.sum")
+        || path_str.ends_with(".sh")
+    {
+        return CacheDomain::BuildArtifact;
     }
 
     // ── Docker / container caches ────────────────────────────────

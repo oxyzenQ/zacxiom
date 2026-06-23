@@ -25,11 +25,22 @@ pub fn score(result: &mut ClassificationResult, path: &Path, lower: &str) {
             score += 40;
             reasons.push("✓ Exact system rule matched".into());
             40
-        } else if rule_name.starts_with("config-") || rule_name.starts_with("user-") {
+        } else if rule_name.starts_with("config-")
+            || rule_name.starts_with("user-")
+            || rule_name.starts_with("source-")
+            || rule_name.starts_with("rust-")
+            || rule_name.starts_with("node-")
+            || rule_name.starts_with("go-")
+            || rule_name.starts_with("shell-")
+            || rule_name.starts_with("project-")
+        {
             score += 35;
             reasons.push("✓ Exact path rule matched".into());
             35
-        } else if rule_name.starts_with("cache-") || rule_name.starts_with("app-") {
+        } else if rule_name.starts_with("cache-")
+            || rule_name.starts_with("app-")
+            || rule_name.starts_with("rustup-")
+        {
             score += 30;
             reasons.push("✓ Known cache/application rule matched".into());
             30
@@ -85,6 +96,7 @@ pub fn score(result: &mut ClassificationResult, path: &Path, lower: &str) {
     } else if lower.contains("/home/") || lower.contains("/root/") {
         if lower.contains("/.cache/")
             || lower.contains("/.cargo/")
+            || lower.contains("/.rustup/")
             || lower.contains("/.npm/")
             || lower.contains("/.config/")
         {
@@ -260,7 +272,11 @@ mod tests {
                 path,
                 r.confidence
             );
-            assert!(r.confidence_reasons.len() >= 1, "path {}: no reasons", path);
+            assert!(
+                !r.confidence_reasons.is_empty(),
+                "path {}: no reasons",
+                path
+            );
             assert!(
                 !r.confidence_explanation.is_empty(),
                 "path {}: no explanation",

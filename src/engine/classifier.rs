@@ -46,6 +46,41 @@ pub fn classify(path: &Path) -> ClassificationResult {
         }
     }
 
+    // ── Layer 2.5: Project/workspace detection (filesystem-aware) ──
+    // Only when no rule matched and path is a directory.
+    // This is expensive (filesystem access) but only called from explain,
+    // not from the scan pipeline (which uses classify_fast).
+    if !matched && path.is_dir() {
+        if path.join("Cargo.toml").exists() {
+            result.category = Category::ProjectWorkspace;
+            result.risk_level = RiskLevel::High;
+            result.regenerable = false;
+            result.matched_by = "project-rust".to_string();
+            result
+                .reasons
+                .push("Rust project workspace detected (Cargo.toml present)".into());
+            matched = true;
+        } else if path.join("package.json").exists() {
+            result.category = Category::ProjectWorkspace;
+            result.risk_level = RiskLevel::High;
+            result.regenerable = false;
+            result.matched_by = "project-node".to_string();
+            result
+                .reasons
+                .push("Node.js project workspace detected (package.json present)".into());
+            matched = true;
+        } else if path.join("go.mod").exists() {
+            result.category = Category::ProjectWorkspace;
+            result.risk_level = RiskLevel::High;
+            result.regenerable = false;
+            result.matched_by = "project-go".to_string();
+            result
+                .reasons
+                .push("Go project workspace detected (go.mod present)".into());
+            matched = true;
+        }
+    }
+
     // ── Layer 2: Metadata analysis ────────────────────────────
     if metadata::is_elf_binary(path) {
         if result.category == Category::Unknown {
@@ -194,5 +229,129 @@ mod tests {
         // Config items should NOT be regenerable
         let config = classify(Path::new("/home/user/.zshrc"));
         assert!(!config.regenerable);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v6.3.3: Semantic Explain Engine tests
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_rust_cargo_toml_is_build_manifest() {
+        let r = classify(Path::new("Cargo.toml"));
+        assert_eq!(r.category, Category::BuildManifest);
+        assert_eq!(r.matched_by, "rust-cargo-toml");
+        assert!(!r.regenerable);
+    }
+
+    #[test]
+    fn test_rust_cargo_lock_is_dependency_lockfile() {
+        let r = classify(Path::new("Cargo.lock"));
+        assert_eq!(r.category, Category::DependencyLockfile);
+        assert_eq!(r.matched_by, "rust-cargo-lock");
+        assert!(r.regenerable);
+    }
+
+    #[test]
+    fn test_cargo_toml_not_generic_config() {
+        // Cargo.toml must NOT be classified as generic ApplicationConfiguration
+        let r = classify(Path::new("/home/user/project/Cargo.toml"));
+        assert_ne!(r.category, Category::ApplicationConfiguration);
+        assert_eq!(r.category, Category::BuildManifest);
+    }
+
+    #[test]
+    fn test_node_package_json_is_build_manifest() {
+        let r = classify(Path::new("package.json"));
+        assert_eq!(r.category, Category::BuildManifest);
+        assert_eq!(r.matched_by, "node-package-json");
+    }
+
+    #[test]
+    fn test_go_mod_is_build_manifest() {
+        let r = classify(Path::new("go.mod"));
+        assert_eq!(r.category, Category::BuildManifest);
+        assert_eq!(r.matched_by, "go-mod");
+    }
+
+    #[test]
+    fn test_source_dir_classification() {
+        let r = classify(Path::new("src"));
+        assert_eq!(r.category, Category::SourceDirectory);
+        assert_eq!(r.matched_by, "source-dir");
+
+        let r2 = classify(Path::new("/home/user/project/src"));
+        assert_eq!(r2.category, Category::SourceDirectory);
+
+        let r3 = classify(Path::new("/home/user/project/src/main.rs"));
+        assert_eq!(r3.category, Category::SourceDirectory);
+    }
+
+    #[test]
+    fn test_usr_src_not_source_dir() {
+        // /usr/src should NOT be SourceDirectory (system territory)
+        let r = classify(Path::new("/usr/src/linux/foo.c"));
+        // Should be matched by sys-lib or similar, NOT source-dir
+        assert_ne!(r.matched_by, "source-dir");
+    }
+
+    #[test]
+    fn test_shell_script_classification() {
+        let r = classify(Path::new("scripts/install.sh"));
+        assert_eq!(r.category, Category::ShellScript);
+        assert_eq!(r.matched_by, "shell-script");
+
+        let r2 = classify(Path::new("/home/user/project/build.sh"));
+        assert_eq!(r2.category, Category::ShellScript);
+    }
+
+    #[test]
+    fn test_rustup_home_is_toolchain_manager() {
+        let r = classify(Path::new("/home/user/.rustup"));
+        assert_eq!(r.category, Category::ToolchainManager);
+        assert_eq!(r.matched_by, "rustup-home");
+    }
+
+    #[test]
+    fn test_rustup_toolchains_is_toolchain_installation() {
+        let r = classify(Path::new("/home/user/.rustup/toolchains"));
+        assert_eq!(r.category, Category::ToolchainInstallation);
+        assert_eq!(r.matched_by, "rustup-toolchains-dir");
+
+        let r2 = classify(Path::new(
+            "/home/user/.rustup/toolchains/stable-x86_64/bin/rustc",
+        ));
+        assert_eq!(r2.category, Category::ToolchainInstallation);
+    }
+
+    #[test]
+    fn test_rustup_not_unknown() {
+        // ~/.rustup and ~/.rustup/toolchains must never be Unknown
+        let r1 = classify(Path::new("/home/dev/.rustup"));
+        assert_ne!(r1.category, Category::Unknown);
+
+        let r2 = classify(Path::new("/home/dev/.rustup/toolchains"));
+        assert_ne!(r2.category, Category::Unknown);
+    }
+
+    #[test]
+    fn test_build_manifest_not_unknown() {
+        // Cargo.toml, package.json, go.mod must never be Unknown or generic config
+        let paths = ["Cargo.toml", "package.json", "go.mod", "Cargo.lock"];
+        for p in &paths {
+            let r = classify(Path::new(p));
+            assert_ne!(r.category, Category::Unknown, "{} was Unknown", p);
+        }
+    }
+
+    #[test]
+    fn test_target_dir_is_build_cache() {
+        // Wider /target/ matching — not just debug/release
+        let r1 = classify(Path::new("/home/user/project/target/doc/index.html"));
+        assert_eq!(r1.category, Category::BuildCache);
+
+        let r2 = classify(Path::new(
+            "/home/user/project/target/wasm32-unknown-unknown/release/deps/app.wasm",
+        ));
+        assert_eq!(r2.category, Category::BuildCache);
     }
 }

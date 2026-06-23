@@ -51,17 +51,24 @@ fn category_to_tier(cat: &Category) -> Tier {
         | Category::UserDocument
         | Category::UserMedia
         | Category::UserDesktop
-        | Category::ShellConfiguration => Tier::Minimal,
+        | Category::ShellConfiguration
+        | Category::ProjectWorkspace
+        | Category::SourceDirectory
+        | Category::BuildManifest => Tier::Minimal,
 
         Category::ApplicationConfiguration
         | Category::EnvironmentFile
-        | Category::ApplicationData => Tier::Moderate,
+        | Category::ApplicationData
+        | Category::ShellScript
+        | Category::ToolchainManager
+        | Category::ToolchainInstallation => Tier::Moderate,
 
         Category::Cache
         | Category::DockerStorage
         | Category::GameData
         | Category::AIModelCache
-        | Category::DownloadedArtifact => Tier::High,
+        | Category::DownloadedArtifact
+        | Category::DependencyLockfile => Tier::High,
 
         Category::BuildCache
         | Category::PackageCache
@@ -69,6 +76,26 @@ fn category_to_tier(cat: &Category) -> Tier {
         | Category::TemporaryFile => Tier::Maximum,
 
         Category::Unknown => Tier::Moderate,
+    }
+}
+
+/// Produce a semantic title that is project-specific based on the matched rule.
+/// The generic Category display name (e.g. "Project Workspace") is overridden
+/// with a specific name (e.g. "Rust Project Workspace") when the matched rule
+/// provides enough context.
+fn semantic_title(cat: &Category, matched_by: &str) -> String {
+    match (cat, matched_by) {
+        (_, "project-rust") => "Rust Project Workspace".into(),
+        (_, "project-node") => "Node.js Project Workspace".into(),
+        (_, "project-go") => "Go Project Workspace".into(),
+        (Category::BuildManifest, "rust-cargo-toml") => "Rust Package Manifest".into(),
+        (Category::BuildManifest, "node-package-json") => "Node.js Package Manifest".into(),
+        (Category::BuildManifest, "go-mod") => "Go Module File".into(),
+        (Category::DependencyLockfile, "rust-cargo-lock") => "Rust Dependency Lockfile".into(),
+        (Category::DependencyLockfile, "node-package-lock") => "Node.js Dependency Lockfile".into(),
+        (Category::ToolchainManager, _) => "Rust Toolchain Manager".into(),
+        (Category::ToolchainInstallation, _) => "Installed Rust Toolchains".into(),
+        _ => cat.display().to_string(),
     }
 }
 
@@ -80,9 +107,10 @@ pub fn explain_domain(
     file_count: usize,
 ) -> Explanation {
     let (what, why, consequence, recommendation) = render_category(&eng.category, eng);
+    let title = semantic_title(&eng.category, &eng.matched_by);
 
     Explanation {
-        title: eng.category.display().to_string(),
+        title,
         what: what.to_string(),
         size: simulator::human_size(total_size),
         tier,
@@ -233,6 +261,48 @@ fn render_category(
             "Models can be re-downloaded from their sources. Training checkpoints are permanently deleted — review carefully.".into(),
             "Models will re-download when needed. Checkpoints are lost permanently.".into(),
             Some("Review checkpoints carefully. Models can be re-downloaded.".into()),
+        ),
+        Category::ProjectWorkspace => (
+            "Project workspace containing source code, manifests, and build configuration.",
+            format!("This is a project root directory — source code and configuration live here. Not cache. Never auto-clean. {}", reasons),
+            "Project source code and configuration are lost. The project would need to be restored from version control or rebuilt.".into(),
+            Some("Never auto-clean. Version control protects against accidental loss, but uncommitted changes would be lost.".into()),
+        ),
+        Category::SourceDirectory => (
+            "Source code directory — contains the project's implementation files.",
+            "This is where source code lives. Not cache, not build output. Deleting loses source code.".into(),
+            "Source code files are permanently deleted. Only recoverable from version control if committed.".into(),
+            Some("Never auto-clean. Source code is never safe to delete.".into()),
+        ),
+        Category::BuildManifest => (
+            "Package manifest file — defines project identity, dependencies, and build configuration.",
+            format!("This is the project's primary definition file. Without it, the project cannot be built or identified. {}", reasons),
+            "The project loses its build definition. Dependencies, scripts, and metadata are lost. Must be recreated manually.".into(),
+            Some("Never delete. This file defines the project.".into()),
+        ),
+        Category::DependencyLockfile => (
+            "Dependency lockfile — pins exact dependency versions for reproducible builds.",
+            format!("Lockfiles ensure every build uses the same dependency versions. Regenerable from the manifest, but team reproducibility depends on committed lockfiles. {}", reasons),
+            "Dependency versions may change on next build. Builds may break or produce different outputs until lockfile is regenerated.".into(),
+            Some("Regenerable but important. Do not delete in shared projects without team coordination.".into()),
+        ),
+        Category::ShellScript => (
+            "Shell script — automation, build, or deployment script.",
+            "Shell scripts are project tooling. They automate builds, installs, deployments, and other workflows. Not cache.".into(),
+            "Automation and build scripts are lost. CI/CD pipelines or development workflows may break.".into(),
+            Some("Do not auto-delete. Review before removing.".into()),
+        ),
+        Category::ToolchainManager => (
+            "Toolchain manager directory — manages installed compiler and tool versions.",
+            "Contains toolchain installations and update metadata. Redownloaded by the toolchain manager, but large and time-consuming to restore.".into(),
+            "All installed toolchains and update state are removed. Tools like rustup will need to reinstall everything.".into(),
+            Some("Safe to reclaim if disk space is critical, but reinstalling is expensive in time and bandwidth.".into()),
+        ),
+        Category::ToolchainInstallation => (
+            "Installed compiler toolchain — the actual compiler, standard library, and tools.",
+            "Can be reinstalled by the toolchain manager, but this requires significant download time and bandwidth. Not build cache — this is installed tooling.".into(),
+            "The compiler and tools are removed. Builds will fail until the toolchain is reinstalled. Reinstall may take several minutes and hundreds of MB.".into(),
+            Some("Safe to reclaim if disk space is critical. Otherwise keep — reinstalling is expensive.".into()),
         ),
         Category::Unknown => (
             "Storage that may be safe to clean after review.",

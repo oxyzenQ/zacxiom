@@ -39,6 +39,15 @@ pub enum Category {
     // ── Downloaded artifacts: regenerable but expensive ────
     DownloadedArtifact,
 
+    // ── Developer workspace: project structure ────────────
+    ProjectWorkspace,
+    SourceDirectory,
+    BuildManifest,
+    DependencyLockfile,
+    ShellScript,
+    ToolchainManager,
+    ToolchainInstallation,
+
     // ── Application data: review before cleaning ────────────
     ApplicationData,
     DockerStorage,
@@ -60,6 +69,7 @@ impl Category {
                 | Category::BrowserCache
                 | Category::TemporaryFile
                 | Category::DownloadedArtifact
+                | Category::DependencyLockfile
         )
     }
 
@@ -72,6 +82,9 @@ impl Category {
                 | Category::SystemData
                 | Category::VirtualFilesystem
                 | Category::SecurityCredential
+                | Category::ProjectWorkspace
+                | Category::SourceDirectory
+                | Category::BuildManifest
         )
     }
 
@@ -100,6 +113,13 @@ impl Category {
             Category::DockerStorage => "Docker Storage",
             Category::GameData => "Game Data",
             Category::AIModelCache => "AI Model Cache",
+            Category::ProjectWorkspace => "Project Workspace",
+            Category::SourceDirectory => "Source Code Directory",
+            Category::BuildManifest => "Package Manifest",
+            Category::DependencyLockfile => "Dependency Lockfile",
+            Category::ShellScript => "Shell Script",
+            Category::ToolchainManager => "Toolchain Manager",
+            Category::ToolchainInstallation => "Toolchain Installation",
             Category::Unknown => "Unknown",
         }
     }

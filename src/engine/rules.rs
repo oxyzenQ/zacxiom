@@ -352,7 +352,7 @@ fn build_rules() -> Vec<Rule> {
         Rule {
             name: "cache-build-target",
             matches: |_, lower| {
-                lower.contains("/target/") && (lower.contains("debug") || lower.contains("release"))
+                lower.contains("/target/") && !lower.starts_with("/usr/") && !lower.starts_with("/var/")
             },
             category: Category::BuildCache,
             risk_level: RiskLevel::Minimal,
@@ -494,13 +494,11 @@ fn build_rules() -> Vec<Rule> {
         },
         Rule {
             name: "app-rustup",
-            matches: |_, lower| {
-                lower.contains("/.rustup/toolchains/") || lower.contains("/.rustup/update-hashes/")
-            },
+            matches: |_, lower| lower.contains("/.rustup/update-hashes/"),
             category: Category::DownloadedArtifact,
             risk_level: RiskLevel::Low,
             regenerable: true,
-            reason: "Rust toolchain installation — redownloaded by rustup, but expensive",
+            reason: "Rustup update hash data — used to check for toolchain updates",
         },
         Rule {
             name: "app-cargo-registry",
@@ -551,7 +549,114 @@ fn build_rules() -> Vec<Rule> {
             reason: "Browser profile — bookmarks, passwords, extensions",
         },
         // ═══════════════════════════════════════════════════════
-        // LAYER 9: Config files by extension
+        // LAYER 8.5: Developer workspace — build manifests, source dirs, scripts
+        // Must come before config-file-ext to prevent Cargo.toml,
+        // package.json, go.mod from being classified as generic
+        // Application Configuration.
+        // ═══════════════════════════════════════════════════════
+        Rule {
+            name: "rust-cargo-toml",
+            matches: |path, _| {
+                path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml")
+            },
+            category: Category::BuildManifest,
+            risk_level: RiskLevel::High,
+            regenerable: false,
+            reason: "Rust package manifest — defines project metadata, dependencies, and build configuration",
+        },
+        Rule {
+            name: "rust-cargo-lock",
+            matches: |path, _| {
+                path.file_name().and_then(|n| n.to_str()) == Some("Cargo.lock")
+            },
+            category: Category::DependencyLockfile,
+            risk_level: RiskLevel::High,
+            regenerable: true,
+            reason: "Rust dependency lockfile — ensures reproducible builds by pinning dependency versions",
+        },
+        Rule {
+            name: "node-package-json",
+            matches: |path, _| {
+                path.file_name().and_then(|n| n.to_str()) == Some("package.json")
+            },
+            category: Category::BuildManifest,
+            risk_level: RiskLevel::High,
+            regenerable: false,
+            reason: "Node.js package manifest — defines project metadata, dependencies, and scripts",
+        },
+        Rule {
+            name: "node-package-lock",
+            matches: |path, _| {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                name == "package-lock.json"
+                    || name == "yarn.lock"
+                    || name == "pnpm-lock.yaml"
+            },
+            category: Category::DependencyLockfile,
+            risk_level: RiskLevel::High,
+            regenerable: true,
+            reason: "Node.js dependency lockfile — ensures reproducible installs by pinning versions",
+        },
+        Rule {
+            name: "go-mod",
+            matches: |path, _| {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                name == "go.mod" || name == "go.sum"
+            },
+            category: Category::BuildManifest,
+            risk_level: RiskLevel::High,
+            regenerable: false,
+            reason: "Go module definition — defines module path and dependency requirements",
+        },
+        Rule {
+            name: "source-dir",
+            matches: |_, lower| {
+                // Match src/ as a project source directory.
+                // Exclude /usr/src (system source — handled by system rules).
+                (lower.ends_with("/src") || lower == "src")
+                    || (lower.contains("/src/") && !lower.starts_with("/usr/src"))
+            },
+            category: Category::SourceDirectory,
+            risk_level: RiskLevel::High,
+            regenerable: false,
+            reason: "Source code directory — contains project source files",
+        },
+        Rule {
+            name: "shell-script",
+            matches: |path, _| path.extension().and_then(|e| e.to_str()) == Some("sh"),
+            category: Category::ShellScript,
+            risk_level: RiskLevel::Moderate,
+            regenerable: false,
+            reason: "Shell script — automation, build, or deployment script",
+        },
+        // ═══════════════════════════════════════════════════════
+        // LAYER 8.6: Rustup toolchain management
+        // Must come before app-rustup to catch bare directory paths
+        // that the existing rule misses (no trailing slash).
+        // ═══════════════════════════════════════════════════════
+        Rule {
+            name: "rustup-home",
+            matches: |_, lower| {
+                lower.ends_with("/.rustup") || lower == "/.rustup"
+            },
+            category: Category::ToolchainManager,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "Rust toolchain manager — manages installed Rust compiler versions via rustup",
+        },
+        Rule {
+            name: "rustup-toolchains-dir",
+            matches: |_, lower| {
+                lower.ends_with("/.rustup/toolchains")
+                    || lower.contains("/.rustup/toolchains/")
+            },
+            category: Category::ToolchainInstallation,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "Installed Rust compiler toolchains — redownloaded by rustup, but expensive to restore",
+        },
+        // ═══════════════════════════════════════════════════════
+        // LAYER 9: Config files by extension (generic fallback)
         // ═══════════════════════════════════════════════════════
         Rule {
             name: "config-file-ext",
