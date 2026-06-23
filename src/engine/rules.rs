@@ -595,6 +595,33 @@ fn build_rules() -> Vec<Rule> {
             reason: "Browser profile — bookmarks, passwords, extensions",
         },
         // ═══════════════════════════════════════════════════════
+        // LAYER 8.4: Rustup toolchain management
+        // MUST come before source-dir, manifest rules, and config-file-ext
+        // to prevent rustup internal paths from being misclassified
+        // as Source Code Directory or Build Manifest.
+        // ═══════════════════════════════════════════════════════
+        Rule {
+            name: "rustup-home",
+            matches: |_, lower| {
+                lower.ends_with("/.rustup") || lower == "/.rustup"
+            },
+            category: Category::ToolchainManager,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "Rust toolchain manager — manages installed Rust compiler versions via rustup",
+        },
+        Rule {
+            name: "rustup-toolchains-dir",
+            matches: |_, lower| {
+                lower.ends_with("/.rustup/toolchains")
+                    || lower.contains("/.rustup/toolchains/")
+            },
+            category: Category::ToolchainInstallation,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "Installed Rust compiler toolchains — redownloaded by rustup, but expensive to restore",
+        },
+        // ═══════════════════════════════════════════════════════
         // LAYER 8.5: Developer workspace — build manifests, source dirs, scripts
         // Must come before config-file-ext to prevent Cargo.toml,
         // package.json, go.mod from being classified as generic
@@ -602,8 +629,10 @@ fn build_rules() -> Vec<Rule> {
         // ═══════════════════════════════════════════════════════
         Rule {
             name: "rust-cargo-toml",
-            matches: |path, _| {
-                path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml")
+            matches: |path, lower| {
+                // Cargo.toml inside /.rustup/ is part of the toolchain, not a project manifest
+                !lower.contains("/.rustup/")
+                    && path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml")
             },
             category: Category::BuildManifest,
             risk_level: RiskLevel::High,
@@ -658,9 +687,13 @@ fn build_rules() -> Vec<Rule> {
             name: "source-dir",
             matches: |_, lower| {
                 // Match src/ as a project source directory.
-                // Exclude /usr/src (system source — handled by system rules).
-                (lower.ends_with("/src") || lower == "src")
-                    || (lower.contains("/src/") && !lower.starts_with("/usr/src"))
+                // Exclude /usr/src (system source), /.rustup/ (toolchain source),
+                // and /.cargo/ (registry source) — these are NOT project source.
+                !lower.contains("/.rustup/")
+                    && !lower.contains("/.cargo/")
+                    && !lower.starts_with("/usr/src")
+                    && ((lower.ends_with("/src") || lower == "src")
+                        || lower.contains("/src/"))
             },
             category: Category::SourceDirectory,
             risk_level: RiskLevel::High,
@@ -676,31 +709,11 @@ fn build_rules() -> Vec<Rule> {
             reason: "Shell script — automation, build, or deployment script",
         },
         // ═══════════════════════════════════════════════════════
-        // LAYER 8.6: Rustup toolchain management
-        // Must come before app-rustup to catch bare directory paths
-        // that the existing rule misses (no trailing slash).
+        // LAYER 8.6: Rustup toolchain management (MOVED to 8.4 above)
+        // This section intentionally left empty — rules moved earlier
+        // to prevent rustup paths from being misclassified by
+        // source-dir, manifest, and config rules.
         // ═══════════════════════════════════════════════════════
-        Rule {
-            name: "rustup-home",
-            matches: |_, lower| {
-                lower.ends_with("/.rustup") || lower == "/.rustup"
-            },
-            category: Category::ToolchainManager,
-            risk_level: RiskLevel::Low,
-            regenerable: true,
-            reason: "Rust toolchain manager — manages installed Rust compiler versions via rustup",
-        },
-        Rule {
-            name: "rustup-toolchains-dir",
-            matches: |_, lower| {
-                lower.ends_with("/.rustup/toolchains")
-                    || lower.contains("/.rustup/toolchains/")
-            },
-            category: Category::ToolchainInstallation,
-            risk_level: RiskLevel::Low,
-            regenerable: true,
-            reason: "Installed Rust compiler toolchains — redownloaded by rustup, but expensive to restore",
-        },
         // ═══════════════════════════════════════════════════════
         // LAYER 9: Config files by extension (generic fallback)
         // ═══════════════════════════════════════════════════════

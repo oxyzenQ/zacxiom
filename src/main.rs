@@ -709,7 +709,17 @@ fn run_clean(
         if !domains.is_empty() {
             println!("\n  WOULD CLEAN BY DOMAIN\n");
             for d in domains.iter().take(10) {
-                let tier = if d.risk_score < 0.15 {
+                // v6.4.0: Use dominant decision + risk_score to compute tier.
+                // Pure risk_score mapping ignores the bridge override that
+                // changes toolchain files from Safe to LowRisk.
+                // LOWRISK/MIXED-dominant domains (e.g. toolchains) → ★★★★ High.
+                let tier = if d.dominant_decision == "SAFE" {
+                    confidence::Tier::Maximum
+                } else if d.dominant_decision == "BLOCKED" {
+                    confidence::Tier::Protected
+                } else if d.dominant_decision == "LOWRISK" || d.dominant_decision == "MIXED" {
+                    confidence::Tier::High // ★★★★ — requires --smart
+                } else if d.risk_score < 0.15 {
                     confidence::Tier::Maximum
                 } else if d.risk_score < 0.35 {
                     confidence::Tier::High
@@ -1155,4 +1165,133 @@ fn contributor_name(path: &str) -> String {
             }
         })
         .unwrap_or_else(|| "Other".into())
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+    use crate::confidence;
+    use crate::rules::{ClassifiedFile, Decision, Ownership};
+
+    /// Build a ClassifiedFile as if it went through the full scan pipeline
+    /// for a given path, then check the final decision and tier.
+    fn classify_via_pipeline(path: &str) -> (Decision, confidence::Tier, String) {
+        let path_buf = PathBuf::from(path);
+
+        // Step 1: Legacy cache classifier
+        let domain = cache::classify(&path_buf);
+
+        // Step 2: Risk scoring (simplified — Developer domain gives Safe)
+        let mut decision = Decision::Safe;
+        let mut risk_reasons: Vec<String> = vec!["fully regenerable cache".into()];
+
+        // Step 3: Engine fast classify
+        let eng = crate::engine::classify_fast(&path_buf);
+        let engine_category = eng.0.to_string();
+        let engine_confidence = eng.1;
+
+        // Step 4: Bridge override (same logic as main.rs classify())
+        if decision == Decision::Safe {
+            if engine_category == "Toolchain Installation" || engine_category == "Toolchain Manager"
+            {
+                decision = Decision::LowRisk;
+                risk_reasons.push(
+                    "Installed toolchain: regenerable but expensive to restore, requires --smart"
+                        .into(),
+                );
+            } else if engine_category.contains("Downloaded") {
+                decision = Decision::LowRisk;
+                risk_reasons
+                    .push("Downloaded artifact: regenerable but expensive to restore".into());
+            }
+        }
+
+        // Step 5: Build ClassifiedFile
+        let cf = ClassifiedFile {
+            path: path.to_string(),
+            size: 1000,
+            cache_domain: domain,
+            ownership: Ownership::User { uid: 1000 },
+            risk_score: 0.0,
+            risk_reasons,
+            decision: decision.clone(),
+            engine_category,
+            engine_confidence,
+        };
+
+        // Step 6: Confidence tier
+        let tier = confidence::confidence(&cf);
+
+        (decision, tier, cf.engine_category.clone())
+    }
+
+    #[test]
+    fn test_toolchain_not_cleanable_in_safe_mode() {
+        let (decision, tier, engine_cat) =
+            classify_via_pipeline("/home/user/.rustup/toolchains/stable-x86_64/bin/rustc");
+
+        // Engine must classify as Toolchain Installation
+        assert_eq!(
+            engine_cat, "Toolchain Installation",
+            "Expected Toolchain Installation, got {}",
+            engine_cat
+        );
+
+        // Decision must be LowRisk (not Safe)
+        assert_eq!(decision, Decision::LowRisk);
+
+        // Tier must NOT be ★★★★★ Maximum
+        assert_ne!(tier, confidence::Tier::Maximum);
+
+        // Tier should be ★★★★ High
+        assert_eq!(tier, confidence::Tier::High);
+
+        // Must NOT be cleanable in safe mode
+        assert!(!decision.is_cleanable(false, false));
+
+        // Must be cleanable in smart mode
+        assert!(decision.is_cleanable(true, false));
+    }
+
+    #[test]
+    fn test_toolchain_src_file_not_cleanable_in_safe_mode() {
+        // A .rs file inside rustup toolchains — must not be misclassified
+        let (decision, _tier, engine_cat) = classify_via_pipeline(
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/src/rust/library/std/src/lib.rs",
+        );
+
+        // Must NOT be classified as Source Code Directory
+        assert_ne!(
+            engine_cat, "Source Code Directory",
+            "Rustup source file should not be Source Code Directory, got {}",
+            engine_cat
+        );
+
+        // Must be Toolchain Installation
+        assert_eq!(engine_cat, "Toolchain Installation");
+
+        // Must NOT be cleanable in safe mode
+        assert!(!decision.is_cleanable(false, false));
+    }
+
+    #[test]
+    fn test_rustup_home_not_cleanable_in_safe_mode() {
+        let (decision, _tier, engine_cat) = classify_via_pipeline("/home/user/.rustup");
+
+        assert_eq!(engine_cat, "Toolchain Manager");
+        assert_eq!(decision, Decision::LowRisk);
+        assert!(!decision.is_cleanable(false, false));
+        assert!(decision.is_cleanable(true, false));
+    }
+
+    #[test]
+    fn test_regular_build_cache_still_cleanable() {
+        // Regular build cache should still be cleanable in safe mode
+        let (decision, _tier, engine_cat) =
+            classify_via_pipeline("/home/user/project/target/debug/deps/app-abc.rlib");
+
+        assert_eq!(engine_cat, "Build Cache");
+        assert_eq!(decision, Decision::Safe);
+        assert!(decision.is_cleanable(false, false));
+    }
 }

@@ -102,7 +102,18 @@ pub fn summarize(files: &[ClassifiedFile]) -> Vec<DomainSummary> {
             } else if blocked_count > file_count / 2 {
                 "BLOCKED"
             } else {
-                "MIXED"
+                // v6.4.0: Distinguish LOWRISK-dominant from truly mixed.
+                // When most cleanable files are LowRisk (e.g. toolchains),
+                // report "LOWRISK" so the display tier shows ★★★★ not ★★★★★.
+                let low_risk_count = entries
+                    .iter()
+                    .filter(|e| matches!(e.decision, Decision::LowRisk))
+                    .count();
+                if low_risk_count > file_count / 2 {
+                    "LOWRISK"
+                } else {
+                    "MIXED"
+                }
             };
 
             DomainSummary {
