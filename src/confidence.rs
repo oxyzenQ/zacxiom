@@ -116,6 +116,19 @@ pub struct ConfidenceSummary {
 }
 
 impl ConfidenceSummary {
+    /// Zeroed summary for test usage.
+    pub fn empty() -> Self {
+        Self {
+            maximum: 0,
+            high: 0,
+            moderate: 0,
+            low: 0,
+            minimal: 0,
+            protected: 0,
+            total: 0,
+        }
+    }
+
     pub fn from_files(files: &[ClassifiedFile]) -> Self {
         let mut s = Self {
             maximum: 0,

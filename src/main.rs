@@ -452,7 +452,7 @@ fn run_clean(
     prog.done();
 
     if dry_run {
-        // v6.2.0: dry-run mode — preview only
+        // v6.2.2: clean summary, no box art
         let cleanable: Vec<_> = classified
             .iter()
             .filter(|f| f.decision.is_cleanable(smart, force))
@@ -474,21 +474,17 @@ fn run_clean(
         };
 
         println!();
-        println!("╔══════════════════════════════════════════════════════════╗");
-        println!("║           DRY RUN — Preview Only (no files deleted)     ║");
-        println!("╠══════════════════════════════════════════════════════════╣");
+        println!("DRY RUN");
+        println!("───────");
         println!(
-            "║  Mode:         {:<41} ║",
-            format!(
-                "{mode} ({})",
-                if force {
-                    "★★★★★ + ★★★★ + ★★★"
-                } else if smart {
-                    "★★★★★ + ★★★★"
-                } else {
-                    "★★★★★ only"
-                }
-            )
+            "  Mode: {mode} ({})",
+            if force {
+                "★★★★★ + ★★★★ + ★★★"
+            } else if smart {
+                "★★★★★ + ★★★★"
+            } else {
+                "★★★★★ only"
+            }
         );
 
         // Space accounting: safe vs review vs total
@@ -513,37 +509,30 @@ fn run_clean(
             .sum();
 
         println!(
-            "║  Safe (★★★★★):  {:<41} ║",
-            format!(
-                "{} files ({})",
-                cs.maximum,
-                simulator::human_size(safe_size)
-            )
+            "  Safe (★★★★★):  {} files ({})",
+            cs.maximum,
+            simulator::human_size(safe_size)
         );
         println!(
-            "║  Review (★★★+):  {:<40} ║",
-            format!(
-                "{} files ({})",
-                cs.high + cs.moderate,
-                simulator::human_size(review_size)
-            )
+            "  Review (★★★+): {} files ({})",
+            cs.high + cs.moderate,
+            simulator::human_size(review_size)
         );
         println!(
-            "║  Total:         {:>5} files ({:<33}) ║",
+            "  Total:         {} files ({})",
             cleanable.len(),
             simulator::human_size(to_clean_size)
         );
         println!(
-            "║  Would skip:    {:>5} files ({:<33}) ║",
+            "  Would skip:    {} files ({})",
             skipped.len(),
             simulator::human_size(skipped_size)
         );
-        println!("╚══════════════════════════════════════════════════════════╝");
 
         // Domain breakdown (summary-first)
         let domains = domain::summarize(&owned_cleanable);
         if !domains.is_empty() {
-            println!("\n  ── WOULD CLEAN BY DOMAIN ──\n");
+            println!("\n  WOULD CLEAN BY DOMAIN\n");
             for d in domains.iter().take(10) {
                 let tier = if d.risk_score < 0.15 {
                     confidence::Tier::Maximum
@@ -556,7 +545,7 @@ fn run_clean(
                     "  {} {:<35} {:>5} files  {}",
                     tier.stars(),
                     d.domain,
-                    d.file_count,
+                    d.file_count as i64,
                     simulator::human_size(d.total_size)
                 );
             }
@@ -568,7 +557,7 @@ fn run_clean(
         // Top contributors (v6.2.1)
         let top = top_contributors(&owned_cleanable, 8);
         if !top.is_empty() {
-            println!("\n  ── TOP CONTRIBUTORS ──\n");
+            println!("\n  TOP CONTRIBUTORS\n");
             for (name, count, size) in &top {
                 println!(
                     "  {:<40} {:>4} files  {}",
@@ -581,7 +570,7 @@ fn run_clean(
 
         // File list only with --verbose
         if verbose && !cleanable.is_empty() {
-            println!("\n  ── FILES ──\n");
+            println!("\n  FILES\n");
             for f in cleanable.iter().take(50) {
                 let tier = confidence::confidence(f);
                 println!(
@@ -595,7 +584,7 @@ fn run_clean(
                 println!("  ... and {} more files", cleanable.len() - 50);
             }
         } else if !cleanable.is_empty() && !verbose {
-            println!("\n  Use --verbose to see individual file list");
+            println!("\n  (use --verbose for file list)");
         }
         return;
     }
@@ -622,16 +611,15 @@ fn run_clean(
     }
 
     println!();
-    println!("╔══════════════════════════════════════════════════════════╗");
-    println!("║           CLEAN COMPLETE                                ║");
-    println!("╠══════════════════════════════════════════════════════════╣");
+    println!("\nCLEAN COMPLETE");
+    println!("──────────────");
     println!(
-        "║  Removed:  {:>5} files ({:<33}) ║",
+        "  Removed:  {} files ({})",
         report.files_removed,
         simulator::human_size(report.bytes_freed)
     );
     println!(
-        "║  Skipped:  {:>5} files ({:<33}) ║",
+        "  Skipped:  {} files ({})",
         report.files_skipped,
         simulator::human_size(report.bytes_skipped)
     );
@@ -641,10 +629,8 @@ fn run_clean(
             report.errors.len()
         );
     }
-    println!("╠══════════════════════════════════════════════════════════╣");
-    println!("║  Snapshot:  {:<43} ║", snap.id);
-    println!("║  Undo:      zacxiom undo {:<31} ║", snap.id);
-    println!("╚══════════════════════════════════════════════════════════╝");
+    println!("  Snapshot:  {}", snap.id);
+    println!("  Undo:      zacxiom undo {}", snap.id);
 
     if !report.errors.is_empty() {
         println!("\n  Errors:");
@@ -655,48 +641,27 @@ fn run_clean(
 }
 
 fn run_explain(path: &str) {
-    // v6.2.0: explain command — show 5-question trust card
-    // Scan the area around the path to find files
+    // v6.2.2: domain-centric explain — think like a storage advisor
     let target = PathBuf::from(path);
     let roots = if target.is_dir() {
         vec![target.clone()]
-    } else if let Some(parent) = target.parent() {
-        vec![parent.to_path_buf()]
+    } else if target.parent().is_some() && target.exists() {
+        // For a file, explain its containing directory's domain
+        vec![target.parent().unwrap().to_path_buf()]
+    } else if target.parent().is_some() {
+        vec![target.parent().unwrap().to_path_buf()]
     } else {
-        eprintln!("Invalid path: {path}");
+        eprintln!("Cannot access: {path}");
         std::process::exit(1);
     };
 
     let ctx = RunContext::new("dev");
-    let entries = scanner::scan(&roots, 1, 1, true);
+    let entries = scanner::scan(&roots, 2, 1, true);
     let classified = classify(entries, &ctx);
 
-    if classified.is_empty() {
-        // Try domain-level explanation
-        let domains = domain::summarize(&[]);
-        for d in &domains {
-            if d.domain.to_lowercase().contains(&path.to_lowercase()) {
-                let tier = if d.risk_score < 0.15 {
-                    confidence::Tier::Maximum
-                } else if d.risk_score < 0.35 {
-                    confidence::Tier::High
-                } else {
-                    confidence::Tier::Moderate
-                };
-                let exp = explain::explain_domain(&d.domain, d.total_size, tier, d.file_count);
-                println!("{}", explain::render_card(&exp));
-                return;
-            }
-        }
-        eprintln!("No files found at: {path}");
-        std::process::exit(1);
-    }
-
-    // File-level explanations for top matches
-    for f in classified.iter().take(5) {
-        let exp = explain::explain_file(f);
-        println!("{}", explain::render_card(&exp));
-    }
+    // Always use domain-level explanation for the path
+    let exp = explain::explain_path(path, &classified);
+    println!("{}", explain::render_card(&exp));
 }
 
 fn run_undo(id: Option<String>) {
@@ -730,9 +695,9 @@ fn run_status() {
     let mem = memory::ContextMemory::load();
     let safe = safety::system_health_check();
 
-    println!("═══════════════════════════════════════");
+    println!("────────────");
     println!("  ZACXIOM v{} STATUS", env!("CARGO_PKG_VERSION"));
-    println!("═══════════════════════════════════════");
+    println!("────────────");
     println!("  Health    : {:?}", health);
     println!("  History   : {} records", hist.records.len());
     println!("  Snapshots : {} available", snaps.len());
@@ -763,7 +728,7 @@ fn run_status() {
         "  Safety    : {}",
         if safe.passed { "PASS" } else { "FAIL" }
     );
-    println!("═══════════════════════════════════════");
+    println!("────────────");
 }
 
 fn chrono_now() -> String {

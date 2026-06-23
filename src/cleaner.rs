@@ -69,9 +69,8 @@ pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool) -> CleanReport 
 pub fn format_clean_report(report: &CleanReport) -> String {
     let mut out = String::new();
 
-    out.push_str("═══════════════════════════════════════════\n");
-    out.push_str("  ZACXIOM CLEAN REPORT\n");
-    out.push_str("═══════════════════════════════════════════\n\n");
+    out.push_str("CLEAN REPORT\n");
+    out.push_str("────────────\n\n");
 
     out.push_str(&format!(
         "  Files removed : {} ({})\n",
@@ -91,7 +90,6 @@ pub fn format_clean_report(report: &CleanReport) -> String {
         }
     }
 
-    out.push_str("═══════════════════════════════════════════\n");
     out
 }
 

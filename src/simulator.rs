@@ -130,10 +130,10 @@ pub fn simulate(
 pub fn format_report(report: &SimulationReport) -> String {
     let mut out = String::new();
 
-    out.push_str("═══════════════════════════════════════════\n");
+    out.push_str("────────────\n");
     out.push_str("  ZACXIOM SIMULATION REPORT\n");
     out.push_str("  file → reason → risk → decision\n");
-    out.push_str("═══════════════════════════════════════════\n\n");
+    out.push_str("────────────\n\n");
 
     for entry in &report.entries {
         out.push_str(&format!(
@@ -183,7 +183,7 @@ pub fn format_report(report: &SimulationReport) -> String {
         report.protected_count,
         human_size(report.protected_size)
     ));
-    out.push_str("═══════════════════════════════════════════\n");
+    out.push_str("────────────\n");
 
     out
 }
