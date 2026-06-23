@@ -42,11 +42,78 @@ pub fn explain_path(path: &str, classified: &[ClassifiedFile]) -> Explanation {
 }
 
 /// Infer a human-readable domain name from a path.
-/// v6.2.4: Handles files, user directories, cache, and special paths.
+/// v6.2.4: Priority-ordered — system paths checked FIRST, keywords LAST.
 fn infer_domain_name(path: &str, classified: &[ClassifiedFile]) -> String {
     let lower = path.to_lowercase();
 
-    // ── Regular files: classify by extension/path ──────────────
+    // ═══════════════════════════════════════════════════════════
+    // PRIORITY 1: System paths — MUST be checked before keywords
+    // ═══════════════════════════════════════════════════════════
+
+    // System executables — never cache, never cleanable
+    if lower.starts_with("/usr/bin/")
+        || lower == "/usr/bin"
+        || lower.starts_with("/usr/local/bin/")
+        || lower == "/usr/local/bin"
+        || lower.starts_with("/bin/")
+        || lower == "/bin"
+        || lower.starts_with("/sbin/")
+        || lower == "/sbin"
+        || lower.starts_with("/usr/sbin/")
+        || lower == "/usr/sbin"
+        || lower.starts_with("/opt/") && !lower.contains("/cache")
+    {
+        return "System Binary".into();
+    }
+
+    // System configuration — never cache
+    if lower.starts_with("/etc/") || lower == "/etc" {
+        return "System Configuration".into();
+    }
+
+    // System library / boot — never cache
+    if lower.starts_with("/lib/")
+        || lower == "/lib"
+        || lower.starts_with("/lib64/")
+        || lower == "/lib64"
+        || lower.starts_with("/boot/")
+        || lower == "/boot"
+        || lower.starts_with("/usr/lib/")
+        || lower.starts_with("/usr/share/")
+    {
+        return "System Data".into();
+    }
+
+    // Device / proc / sys — never touch
+    if lower.starts_with("/dev/") || lower.starts_with("/proc/") || lower.starts_with("/sys/") {
+        return "System Virtual Filesystem".into();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // PRIORITY 2: User home root — special handling
+    // ═══════════════════════════════════════════════════════════
+
+    // Exact home directory match (e.g. "/home/user" or "/root")
+    // Matches paths like "/home/rezky" exactly, not "/home/rezky/.cache"
+    if lower.matches('/').count() <= 2 && (lower.starts_with("/home/") || lower == "/root") {
+        return "User Home Directory".into();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // PRIORITY 3: Security-critical paths
+    // ═══════════════════════════════════════════════════════════
+
+    if lower.contains(".ssh") {
+        return "SSH Keys & Credentials".into();
+    }
+    if lower.contains(".gnupg") || lower.contains(".gpg") {
+        return "GPG Keys".into();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // PRIORITY 4: Regular files — classify by extension/path
+    // ═══════════════════════════════════════════════════════════
+
     if !path.ends_with('/') {
         // It's a file (or at least not explicitly a directory)
         if lower.ends_with(".zshrc")
@@ -119,13 +186,7 @@ fn infer_domain_name(path: &str, classified: &[ClassifiedFile]) -> String {
         return "Application Configuration".into();
     }
 
-    // ── Protected paths ────────────────────────────────────────
-    if lower.contains(".ssh") {
-        return "SSH Keys & Credentials".into();
-    }
-    if lower.contains(".gnupg") || lower.contains(".gpg") {
-        return "GPG Keys".into();
-    }
+    // ── Protected user data ───────────────────────────────────
     if lower.contains(".local/share") {
         return "User Application Data".into();
     }
@@ -255,6 +316,48 @@ fn match_domain_explanation(
     &'static str,
     Option<&'static str>,
 ) {
+    // ── SYSTEM: Never cleanable ───────────────────────────────
+    if lower.contains("system binary") {
+        return (
+            "Installed application executable or binary.",
+            "This is an installed program, not cache or data. Never deletable. Removing it breaks installed software.",
+            "The application would stop working. May require reinstallation.",
+            Some("Never delete. This is installed software."),
+        );
+    }
+    if lower.contains("system configuration") && !lower.contains("app") {
+        return (
+            "System-wide configuration file (located in /etc or equivalent).",
+            "These files control system behavior — environment variables, service settings, network config. Never auto-clean.",
+            "System services or environment may break. Could prevent boot or login.",
+            Some("Never delete system configuration files."),
+        );
+    }
+    if lower.contains("system data") && !lower.contains("user") {
+        return (
+            "System library, shared resource, or boot data.",
+            "Part of the operating system or installed packages. Never deletable.",
+            "Applications or the system itself may fail.",
+            Some("Never delete system libraries or data."),
+        );
+    }
+    if lower.contains("system virtual") {
+        return (
+            "Virtual kernel filesystem (proc/sys/dev). Not real files.",
+            "These are kernel interfaces, not files on disk. They use zero actual storage. Never touch.",
+            "System instability, kernel panics, or device malfunction.",
+            Some("Never interact with virtual filesystems."),
+        );
+    }
+    if lower.contains("user home") {
+        return (
+            "Your home directory — contains all personal files, projects, configs, downloads, and caches.",
+            "The home directory contains a mix of important files AND cache. Zacxiom scans subdirectories individually — never clean the entire home directory.",
+            "Personal files, projects, and configuration would be permanently lost.",
+            Some("Never clean entire home directory. Use `zacxiom scan` to find specific cache locations."),
+        );
+    }
+
     // ── Protected / User data — accurate warnings ──────────────
     if lower.contains("shell config") || lower.contains(".zshrc") || lower.contains(".bashrc") {
         return (
