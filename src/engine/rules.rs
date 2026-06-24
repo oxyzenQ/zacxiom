@@ -155,6 +155,35 @@ fn build_rules() -> Vec<Rule> {
             reason: "User software directory — contains locally installed executables",
         },
         // ═══════════════════════════════════════════════════════
+        // LAYER 3.5b: Rustup toolchain manager — all paths protected
+        // MUST come before user-downloads (Layer 4) to prevent
+        // ~/.rustup/downloads/ from being misclassified as user downloads,
+        // and before all cache/config rules to prevent any ~/.rustup/
+        // subdirectory from being treated as disposable.
+        // ═══════════════════════════════════════════════════════
+        Rule {
+            name: "rustup-home",
+            matches: |_, lower| lower.ends_with("/.rustup") || lower == "/.rustup",
+            category: Category::ToolchainManager,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "Rust toolchain manager — manages installed Rust compiler versions via rustup",
+        },
+        Rule {
+            name: "rustup-any",
+            matches: |_, lower| {
+                // Match any path inside ~/.rustup/ (but NOT the directory itself,
+                // which is handled by rustup-home above).
+                // This catches: toolchains/, downloads/, tmp/, update-hashes/,
+                // settings.toml, and any future rustup subdirectories.
+                lower.contains("/.rustup/")
+            },
+            category: Category::ToolchainInstallation,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "Rustup toolchain data — installed development tooling, not disposable cache",
+        },
+        // ═══════════════════════════════════════════════════════
         // LAYER 3.6: Version control — never clean
         // ═══════════════════════════════════════════════════════
         Rule {
@@ -275,7 +304,9 @@ fn build_rules() -> Vec<Rule> {
         Rule {
             name: "user-downloads",
             matches: |_, lower| {
-                lower.contains("/downloads")
+                // Exclude /.rustup/downloads/ — those are toolchain downloads, not user files
+                !lower.contains("/.rustup/")
+                    && lower.contains("/downloads")
                     && (lower.ends_with("/downloads") || lower.contains("/downloads/"))
             },
             category: Category::UserDocument,
@@ -539,14 +570,6 @@ fn build_rules() -> Vec<Rule> {
             reason: "Desktop trash — already deleted files; restore before cleaning if needed",
         },
         Rule {
-            name: "app-rustup",
-            matches: |_, lower| lower.contains("/.rustup/update-hashes/"),
-            category: Category::DownloadedArtifact,
-            risk_level: RiskLevel::Low,
-            regenerable: true,
-            reason: "Rustup update hash data — used to check for toolchain updates",
-        },
-        Rule {
             name: "app-cargo-registry",
             matches: |_, lower| {
                 lower.contains("/.cargo/registry/") || lower.ends_with("/.cargo/registry")
@@ -596,31 +619,12 @@ fn build_rules() -> Vec<Rule> {
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 8.4: Rustup toolchain management
-        // MUST come before source-dir, manifest rules, and config-file-ext
-        // to prevent rustup internal paths from being misclassified
-        // as Source Code Directory or Build Manifest.
+        // REDIRECTED: All /.rustup/ paths are now caught by the
+        // rustup-any rule at Layer 3.5b (before user-downloads),
+        // which prevents ~/.rustup/downloads/ from being misclassified.
+        // The specific rustup-home and rustup-toolchains-dir rules
+        // are no longer needed here — rustup-any handles all subpaths.
         // ═══════════════════════════════════════════════════════
-        Rule {
-            name: "rustup-home",
-            matches: |_, lower| {
-                lower.ends_with("/.rustup") || lower == "/.rustup"
-            },
-            category: Category::ToolchainManager,
-            risk_level: RiskLevel::Low,
-            regenerable: true,
-            reason: "Rust toolchain manager — manages installed Rust compiler versions via rustup",
-        },
-        Rule {
-            name: "rustup-toolchains-dir",
-            matches: |_, lower| {
-                lower.ends_with("/.rustup/toolchains")
-                    || lower.contains("/.rustup/toolchains/")
-            },
-            category: Category::ToolchainInstallation,
-            risk_level: RiskLevel::Low,
-            regenerable: true,
-            reason: "Installed Rust compiler toolchains — redownloaded by rustup, but expensive to restore",
-        },
         // ═══════════════════════════════════════════════════════
         // LAYER 8.5: Developer workspace — build manifests, source dirs, scripts
         // Must come before config-file-ext to prevent Cargo.toml,

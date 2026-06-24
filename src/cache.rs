@@ -58,8 +58,7 @@ pub fn classify(path: &Path) -> CacheDomain {
     // ── Developer caches ────────────────────────────────────────
     if path_str.contains("/.cargo/registry/")
         || path_str.contains("/.cargo/git/")
-        || path_str.contains("/.rustup/toolchains/")
-        || path_str.contains("/.rustup/update-hashes/")
+        || path_str.contains("/.rustup/")
         || path_str == "/.rustup"
         || path_str.ends_with("/.rustup")
         || path_str.contains("/.npm/_cacache/")

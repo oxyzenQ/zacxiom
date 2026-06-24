@@ -315,7 +315,7 @@ mod tests {
     fn test_rustup_toolchains_is_toolchain_installation() {
         let r = classify(Path::new("/home/user/.rustup/toolchains"));
         assert_eq!(r.category, Category::ToolchainInstallation);
-        assert_eq!(r.matched_by, "rustup-toolchains-dir");
+        assert_eq!(r.matched_by, "rustup-any");
 
         let r2 = classify(Path::new(
             "/home/user/.rustup/toolchains/stable-x86_64/bin/rustc",
@@ -396,5 +396,155 @@ mod tests {
         let r = classify(Path::new("/home/user/.rustup/toolchains/stable-x86_64"));
         assert_ne!(r.category, Category::Unknown);
         assert_eq!(r.category, Category::ToolchainInstallation);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v6.4.0 deep audit: ZERO Rustup files may become cleanable
+    // in safe mode. Every path inside ~/.rustup/ must be classified
+    // as ToolchainInstallation or ToolchainManager — NEVER as a
+    // cleanable category (Cache, BuildCache, ApplicationConfiguration, etc.)
+    // ═══════════════════════════════════════════════════════════
+
+    /// Helper: assert a path is classified as toolchain-related
+    /// (ToolchainInstallation or ToolchainManager), never cleanable.
+    fn assert_toolchain(path: &str) {
+        let r = classify(Path::new(path));
+        assert!(
+            matches!(
+                r.category,
+                Category::ToolchainInstallation | Category::ToolchainManager
+            ),
+            "BUG: {} classified as {:?} (by {}) — expected ToolchainInstallation/ToolchainManager",
+            path,
+            r.category,
+            r.matched_by,
+        );
+        // Toolchain categories must NOT be cleanable in safe mode
+        assert!(
+            !r.category.is_cleanable(),
+            "BUG: {} classified as cleanable category {:?}",
+            path,
+            r.category,
+        );
+    }
+
+    #[test]
+    fn test_rustup_downloads_is_toolchain() {
+        // ~/.rustup/downloads/ — active toolchain downloads
+        assert_toolchain("/home/user/.rustup/downloads/stable-x86_64.tar.gz");
+        assert_toolchain("/home/dev/.rustup/downloads/nightly-x86_64.partial");
+    }
+
+    #[test]
+    fn test_rustup_tmp_is_toolchain() {
+        // ~/.rustup/tmp/ — temporary extraction files
+        assert_toolchain("/home/user/.rustup/tmp/rustup-temp-extract/lib/rustlib/src");
+        assert_toolchain("/home/dev/.rustup/tmp/staging/manifest");
+    }
+
+    #[test]
+    fn test_rustup_update_hashes_is_toolchain() {
+        // ~/.rustup/update-hashes/ — must be ToolchainInstallation, not DownloadedArtifact
+        assert_toolchain("/home/user/.rustup/update-hashes/stable-x86_64");
+        assert_toolchain("/home/dev/.rustup/update-hashes/nightly-x86_64");
+    }
+
+    #[test]
+    fn test_rustup_settings_toml_is_toolchain() {
+        // ~/.rustup/settings.toml — rustup config, must NOT be ApplicationConfiguration
+        assert_toolchain("/home/user/.rustup/settings.toml");
+    }
+
+    #[test]
+    fn test_rustup_toolchain_bin_is_toolchain() {
+        // Binaries inside toolchain — must be ToolchainInstallation, not SystemBinary
+        assert_toolchain("/home/user/.rustup/toolchains/stable-x86_64/bin/rustc");
+        assert_toolchain("/home/user/.rustup/toolchains/stable-x86_64/bin/cargo");
+        assert_toolchain("/home/user/.rustup/toolchains/nightly-x86_64/bin/rustfmt");
+    }
+
+    #[test]
+    fn test_rustup_toolchain_lib_is_toolchain() {
+        // Libraries inside toolchain
+        assert_toolchain("/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/src/rust/library/core/src/lib.rs");
+        assert_toolchain("/home/user/.rustup/toolchains/stable-x86_64/lib/libstd.so");
+    }
+
+    #[test]
+    fn test_rustup_toolchain_manifest_is_toolchain() {
+        // Manifest files inside toolchain — must NOT be BuildManifest
+        assert_toolchain("/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/manifest-cargo");
+        assert_toolchain("/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/manifest-rustc");
+    }
+
+    #[test]
+    fn test_rustup_toolchain_cargo_toml_is_toolchain() {
+        // Cargo.toml inside toolchain — must be ToolchainInstallation, not BuildManifest
+        assert_toolchain("/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/src/rust/library/core/Cargo.toml");
+    }
+
+    #[test]
+    fn test_rustup_toolchain_shell_script_is_toolchain() {
+        // .sh files inside toolchain — must be ToolchainInstallation, not ShellScript
+        assert_toolchain(
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/etc/lldb_lookup.sh",
+        );
+    }
+
+    #[test]
+    fn test_rustup_comprehensive_all_subpaths() {
+        // Exhaustive enumeration of every known ~/.rustup/ subdirectory structure.
+        // If ANY of these is NOT ToolchainInstallation/ToolchainManager, that's a bug.
+        let rustup_paths = [
+            // Root
+            "/home/user/.rustup",
+            // Toolchains — the bulk of installed files
+            "/home/user/.rustup/toolchains",
+            "/home/user/.rustup/toolchains/stable-x86_64",
+            "/home/user/.rustup/toolchains/stable-x86_64/bin",
+            "/home/user/.rustup/toolchains/stable-x86_64/bin/rustc",
+            "/home/user/.rustup/toolchains/stable-x86_64/bin/cargo",
+            "/home/user/.rustup/toolchains/stable-x86_64/bin/rustfmt",
+            "/home/user/.rustup/toolchains/stable-x86_64/bin/clippy-driver",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/libstd-12345.so",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/src",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/src/rust",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/src/rust/library",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/src/rust/library/core/src/lib.rs",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/src/rust/library/core/Cargo.toml",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/manifest-cargo",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/manifest-rustc",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/manifest-std",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/etc/lldb_lookup.sh",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-12345.rlib",
+            "/home/user/.rustup/toolchains/stable-x86_64/share",
+            "/home/user/.rustup/toolchains/stable-x86_64/share/doc",
+            "/home/user/.rustup/toolchains/stable-x86_64/share/man",
+            // Downloads
+            "/home/user/.rustup/downloads",
+            "/home/user/.rustup/downloads/stable-x86_64.tar.gz",
+            "/home/user/.rustup/downloads/nightly-x86_64.partial",
+            // Temporary extraction
+            "/home/user/.rustup/tmp",
+            "/home/user/.rustup/tmp/rustup-temp-extract",
+            "/home/user/.rustup/tmp/rustup-temp-extract/lib/rustlib/src",
+            "/home/user/.rustup/tmp/staging/manifest",
+            // Update hashes
+            "/home/user/.rustup/update-hashes",
+            "/home/user/.rustup/update-hashes/stable-x86_64",
+            "/home/user/.rustup/update-hashes/nightly-x86_64",
+            // Config
+            "/home/user/.rustup/settings.toml",
+            // Metadata
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/install.log",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/components",
+            "/home/user/.rustup/toolchains/stable-x86_64/lib/rustlib/rust-installer-version",
+        ];
+
+        for path in &rustup_paths {
+            assert_toolchain(path);
+        }
     }
 }

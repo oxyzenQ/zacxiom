@@ -1294,4 +1294,67 @@ mod pipeline_tests {
         assert_eq!(decision, Decision::Safe);
         assert!(decision.is_cleanable(false, false));
     }
+
+    /// v6.4.0: Exhaustive audit — zero rustup files must be cleanable in safe mode.
+    /// Tests EVERY possible rustup sub-path to find policy leaks.
+    #[test]
+    fn audit_zero_rustup_leaks_in_safe_mode() {
+        let rustup_paths = vec![
+            // Root
+            "/home/user/.rustup",
+            // Toolchains
+            "/home/user/.rustup/toolchains",
+            "/home/user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu",
+            "/home/user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc",
+            "/home/user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "/home/user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/libstd-123.rlib",
+            "/home/user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/lib.rs",
+            "/home/user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/share/doc/rust/html/index.html",
+            "/home/user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/share/man/man1/rustc.1",
+            // Update hashes
+            "/home/user/.rustup/update-hashes/stable-x86_64-unknown-linux-gnu",
+            "/home/user/.rustup/update-hashes/stable-x86_64-unknown-linux-gnu.sha256",
+            // Downloads
+            "/home/user/.rustup/downloads/stable-x86_64-unknown-linux-gnu.tar.gz",
+            "/home/user/.rustup/downloads/stable-x86_64-unknown-linux-gnu.tar.xz",
+            "/home/user/.rustup/downloads/RUSTUP_UPDATE_ROOT",
+            // TMP
+            "/home/user/.rustup/tmp/rustup-init-12345.tmp",
+            "/home/user/.rustup/tmp/download-partial.gz",
+            // Settings / metadata
+            "/home/user/.rustup/settings.toml",
+            "/home/user/.rustup/rustup-version",
+            "/home/user/.rustup/version-file",
+            // Misc
+            "/home/user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/etc/lldb_commands",
+        ];
+
+        let mut leaks: Vec<String> = Vec::new();
+
+        for path in &rustup_paths {
+            let (decision, tier, engine_cat) = classify_via_pipeline(path);
+
+            let is_cleanable_safe = decision.is_cleanable(false, false);
+            let is_max_tier = tier == confidence::Tier::Maximum;
+
+            if is_cleanable_safe || is_max_tier {
+                leaks.push(format!(
+                    "{} → decision={:?} tier={:?} engine={}",
+                    path, decision, tier, engine_cat
+                ));
+            }
+        }
+
+        if !leaks.is_empty() {
+            eprintln!("\n━━━ RUSTUP POLICY LEAKS ━━━");
+            for leak in &leaks {
+                eprintln!("  {}", leak);
+            }
+            eprintln!("━━━ {} LEAKS ━━━\n", leaks.len());
+            panic!(
+                "{} rustup paths still leak as cleanable/tier-max in safe mode",
+                leaks.len()
+            );
+        }
+    }
 }
