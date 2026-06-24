@@ -421,12 +421,44 @@ pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::Classification
 }
 
 /// v8.0: Render project ownership and consumer information from the discovery engine.
+/// v8.1: Upgraded to show evidence-based ownership with reasons and confidence.
 fn render_project_section(out: &mut String, eng: &crate::engine::ClassificationResult) {
     use crate::discovery;
+    use crate::ownership;
 
     let path_str = eng.path.to_string_lossy();
 
-    // Check if this path belongs to a known project
+    // v8.1: Evidence-based project ownership
+    if let Some(ownership_match) = ownership::detect_project_ownership(&eng.path) {
+        let om = &ownership_match;
+        out.push_str("\n  OWNERSHIP\n");
+        out.push_str(&format!("{}\n", "─".repeat(60)));
+        out.push_str(&format!(
+            "  Ownership type: {}\n",
+            om.evidence.ownership_type.display()
+        ));
+        out.push_str(&format!("  Owned by:       {}\n", om.project.name));
+        out.push_str(&format!(
+            "  Ecosystem:      {}\n",
+            om.project.ecosystem.display()
+        ));
+
+        if !om.evidence.evidence_files.is_empty() {
+            out.push_str(&format!(
+                "  Evidence:       {}\n",
+                om.evidence.evidence_files.join(", ")
+            ));
+        }
+
+        for reason in &om.evidence.reasons {
+            out.push_str(&format!("  Reason:         {}\n", reason));
+        }
+
+        out.push_str(&format!("  Confidence:     {}%\n", om.evidence.confidence));
+        return;
+    }
+
+    // v8.0 fallback: basic project discovery
     if let Some(project) = discovery::find_project_for_path(&eng.path) {
         out.push_str("\n  PROJECT\n");
         out.push_str(&format!("{}\n", "─".repeat(60)));
