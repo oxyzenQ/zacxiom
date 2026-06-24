@@ -136,6 +136,9 @@ pub fn classify(path: &Path) -> ClassificationResult {
         result.reasons.push("No classification rule matched".into());
     }
 
+    // v7.1: Generate classification reasoning — why this category?
+    result.classification_reasoning = crate::dependency::generate_reasoning(&result);
+
     result
 }
 

@@ -13,6 +13,7 @@ mod cleaner;
 mod cli;
 mod color;
 mod confidence;
+mod dependency;
 mod display;
 mod domain;
 mod engine;
