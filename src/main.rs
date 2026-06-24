@@ -1447,4 +1447,227 @@ mod pipeline_tests {
         assert!(!decision.is_cleanable(true, false)); // NOT cleanable with --smart either
         assert!(decision.is_cleanable(false, true)); // only with --force
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // v6.4.0 ROOT-CAUSE AUDIT: Trace every path that could appear
+    // in "Node.js Modules" or "Cargo Registry & Build Cache" domains
+    // through the full pipeline. Identify which paths leak into the
+    // safe-mode cleanable set and WHY.
+    // ═══════════════════════════════════════════════════════════
+
+    /// Full pipeline trace for a single path — returns every intermediate result.
+    fn trace_pipeline(path: &str) -> PipelineTrace {
+        let path_buf = PathBuf::from(path);
+
+        // Step 1: Legacy cache classifier
+        let cache_domain = cache::classify(&path_buf);
+        let cache_domain_str = format!("{:?}", cache_domain);
+
+        // Step 2: Risk scoring (domain-aware)
+        let (initial_decision, risk_score) = match cache_domain {
+            crate::rules::CacheDomain::Browser
+            | crate::rules::CacheDomain::BuildArtifact
+            | crate::rules::CacheDomain::PackageManager
+            | crate::rules::CacheDomain::Developer => (Decision::Safe, 0.0),
+            crate::rules::CacheDomain::System => (Decision::LowRisk, 0.15),
+            crate::rules::CacheDomain::UserData => (Decision::Moderate, 0.3),
+            crate::rules::CacheDomain::Unknown => (Decision::Moderate, 0.3),
+        };
+
+        // Step 3: Engine fast classify
+        let eng = crate::engine::classify_fast(&path_buf);
+        let engine_category = eng.0.to_string();
+
+        // Step 4: Find which rule matched
+        let lower = path.to_lowercase();
+        let rules = crate::engine::rules::rule_database();
+        let matched_rule = rules
+            .iter()
+            .find(|r| (r.matches)(&path_buf, &lower))
+            .map(|r| r.name.to_string())
+            .unwrap_or_else(|| "NO_MATCH".to_string());
+
+        // Step 5: Bridge override
+        let mut final_decision = initial_decision.clone();
+        if final_decision == Decision::Safe
+            && (engine_category == "Toolchain Installation"
+                || engine_category == "Toolchain Manager"
+                || engine_category.contains("Downloaded"))
+        {
+            final_decision = Decision::LowRisk;
+        }
+
+        // Step 6: Confidence tier
+        let cf = ClassifiedFile {
+            path: path.to_string(),
+            size: 1000,
+            cache_domain,
+            ownership: Ownership::User { uid: 1000 },
+            risk_score,
+            risk_reasons: vec![],
+            decision: final_decision.clone(),
+            engine_category: engine_category.clone(),
+            engine_confidence: eng.1,
+        };
+        let tier = confidence::confidence(&cf);
+
+        // Step 7: Domain key (what domain summary would show)
+        let domain_key = crate::domain::summarize(&[cf])
+            .first()
+            .map(|d| d.domain.clone())
+            .unwrap_or_default();
+
+        PipelineTrace {
+            path: path.to_string(),
+            matched_rule,
+            engine_category,
+            cache_domain: cache_domain_str,
+            initial_decision: format!("{:?}", initial_decision),
+            final_decision: format!("{:?}", final_decision),
+            tier: format!("{:?}", tier),
+            cleanable_safe: final_decision.is_cleanable(false, false),
+            cleanable_smart: final_decision.is_cleanable(true, false),
+            domain_key,
+        }
+    }
+
+    struct PipelineTrace {
+        path: String,
+        matched_rule: String,
+        engine_category: String,
+        cache_domain: String,
+        initial_decision: String,
+        final_decision: String,
+        tier: String,
+        cleanable_safe: bool,
+        cleanable_smart: bool,
+        domain_key: String,
+    }
+
+    #[test]
+    fn audit_node_modules_pipeline_trace() {
+        let paths = vec![
+            // Project node_modules
+            "/home/user/project/node_modules/lodash/index.js",
+            "/home/user/project/node_modules/react/package.json",
+            "/home/user/project/node_modules/@types/node/index.d.ts",
+            "/home/user/project/node_modules/.package-lock.json",
+            "/home/user/project/node_modules/esbuild/bin/esbuild",
+            // The node_modules directory ITSELF (no trailing slash)
+            "/home/user/project/node_modules",
+            // NPX cache
+            "/home/user/.npm/_npx/d3b97f1234/node_modules/@zed-industries/editor/main.js",
+            "/home/user/.npm/_npx/a1b2c3d4e5/node_modules/typescript/bin/tsc",
+            "/home/user/.npm/_npx/f8e7d6c5b4/node_modules/prettier/bin-prettier.js",
+            // The NPX node_modules directory itself
+            "/home/user/.npm/_npx/d3b97f1234/node_modules",
+            // npm cache (NOT node_modules — should be PackageCache)
+            "/home/user/.npm/_cacache/content-v2/sha512/ab/cd/ef",
+            "/home/user/.npm/_cacache/index-v5/12/34",
+            // yarn cache
+            "/home/user/.cache/yarn/v6/npm-lodash-4.17.21/package.json",
+            // pnpm store
+            "/home/user/.cache/pnpm/store/v3/files/ab/cd",
+            // Global node_modules
+            "/home/user/.local/lib/node_modules/npm/bin/npm-cli.js",
+            "/home/user/.local/lib/node_modules/typescript/bin/tsc",
+            // Edge cases: paths with node_modules as substring but not directory
+            "/home/user/project/old_node_modules_backup/data.json",
+            "/home/user/project/node_modules.old/cache.tmp",
+        ];
+
+        eprintln!("\n━━━ NODE_MODULES PIPELINE AUDIT ━━━");
+        eprintln!(
+            "{:<70} {:<18} {:<22} {:<12} {:<12} {:<8} {:<8} {:<30}",
+            "PATH", "RULE", "ENGINE_CAT", "DOMAIN", "INIT_DEC", "FINAL_DEC", "SAFE?", "DOMAIN_KEY"
+        );
+        eprintln!("{}", "─".repeat(200));
+
+        let mut leaks: Vec<PipelineTrace> = Vec::new();
+
+        for path in &paths {
+            let trace = trace_pipeline(path);
+            let is_leak = trace.cleanable_safe && trace.domain_key.contains("Node.js");
+            if is_leak {
+                leaks.push(trace_pipeline(path));
+            }
+            eprintln!(
+                "{:<70} {:<18} {:<22} {:<12} {:<12} {:<12} {:<8} {:<30}",
+                &trace.path[..trace.path.len().min(69)],
+                trace.matched_rule,
+                trace.engine_category,
+                trace.cache_domain,
+                trace.initial_decision,
+                trace.final_decision,
+                if trace.cleanable_safe { "YES" } else { "no" },
+                trace.domain_key,
+            );
+        }
+
+        eprintln!("\n━━━ LEAKS (safe-mode cleanable in Node.js domain) ━━━");
+        for leak in &leaks {
+            eprintln!(
+                "  LEAK: {} → rule={} engine={} decision={} tier={}",
+                leak.path, leak.matched_rule, leak.engine_category, leak.final_decision, leak.tier
+            );
+        }
+        eprintln!("━━━ {} LEAKS ━━━\n", leaks.len());
+    }
+
+    #[test]
+    fn audit_cargo_registry_pipeline_trace() {
+        let paths = vec![
+            // Cargo registry (DownloadedArtifact)
+            "/home/user/.cargo/registry/cache/index.crates.io-abc/syn-1.0.crate",
+            "/home/user/.cargo/registry/src/index.crates.io-abc/syn-1.0/src/lib.rs",
+            "/home/user/.cargo/registry/index.crates.io-6f17d22b50/serde-1.0.228.crate",
+            // Cargo git checkouts (BuildCache)
+            "/home/user/.cargo/git/checkouts/some-crate-abc123/1a2b3c/src/main.rs",
+            "/home/user/.cargo/git/db/some-crate-abc123/.git/HEAD",
+            "/home/user/.cargo/git/db/some-crate-abc123/objects/pack/abc.pack",
+            // Cargo bin (user binary)
+            "/home/user/.cargo/bin/rust-analyzer",
+            // Build target (BuildCache)
+            "/home/user/project/target/debug/deps/app-abc.rlib",
+            "/home/user/project/target/release/build/some-build/output",
+            "/home/user/project/target/doc/index.html",
+        ];
+
+        eprintln!("\n━━━ CARGO PIPELINE AUDIT ━━━");
+        eprintln!(
+            "{:<70} {:<18} {:<22} {:<12} {:<12} {:<12} {:<8} {:<30}",
+            "PATH", "RULE", "ENGINE_CAT", "DOMAIN", "INIT_DEC", "FINAL_DEC", "SAFE?", "DOMAIN_KEY"
+        );
+        eprintln!("{}", "─".repeat(200));
+
+        let mut leaks: Vec<PipelineTrace> = Vec::new();
+
+        for path in &paths {
+            let trace = trace_pipeline(path);
+            let is_leak = trace.cleanable_safe && trace.domain_key.contains("Cargo");
+            if is_leak {
+                leaks.push(trace_pipeline(path));
+            }
+            eprintln!(
+                "{:<70} {:<18} {:<22} {:<12} {:<12} {:<12} {:<8} {:<30}",
+                &trace.path[..trace.path.len().min(69)],
+                trace.matched_rule,
+                trace.engine_category,
+                trace.cache_domain,
+                trace.initial_decision,
+                trace.final_decision,
+                if trace.cleanable_safe { "YES" } else { "no" },
+                trace.domain_key,
+            );
+        }
+
+        eprintln!("\n━━━ LEAKS (safe-mode cleanable in Cargo domain) ━━━");
+        for leak in &leaks {
+            eprintln!(
+                "  LEAK: {} → rule={} engine={} decision={} tier={}",
+                leak.path, leak.matched_rule, leak.engine_category, leak.final_decision, leak.tier
+            );
+        }
+        eprintln!("━━━ {} LEAKS ━━━\n", leaks.len());
+    }
 }

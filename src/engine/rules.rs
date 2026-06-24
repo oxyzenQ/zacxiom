@@ -188,7 +188,11 @@ fn build_rules() -> Vec<Rule> {
         // ═══════════════════════════════════════════════════════
         Rule {
             name: "vcs-git",
-            matches: |_, lower| lower.contains("/.git/") || lower.ends_with("/.git"),
+            matches: |_, lower| {
+                // Exclude /.cargo/git/ — these are cargo dependency checkouts, not project repos
+                !lower.contains("/.cargo/")
+                    && (lower.contains("/.git/") || lower.ends_with("/.git"))
+            },
             category: Category::SystemData,
             risk_level: RiskLevel::Critical,
             regenerable: false,
@@ -367,10 +371,10 @@ fn build_rules() -> Vec<Rule> {
         Rule {
             name: "cache-build-cargo",
             matches: |_, lower| lower.contains("/.cargo/git/") || lower.ends_with("/.cargo/git"),
-            category: Category::BuildCache,
-            risk_level: RiskLevel::Minimal,
+            category: Category::DownloadedArtifact,
+            risk_level: RiskLevel::Low,
             regenerable: true,
-            reason: "Cargo crate cache — redownloaded on next cargo build",
+            reason: "Cargo git checkouts — redownloaded on next cargo build, but large and slow to re-clone",
         },
         Rule {
             name: "cache-build-gradle",
