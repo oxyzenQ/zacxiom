@@ -399,6 +399,9 @@ pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::Classification
         // v8.0: Project discovery — which project owns this path?
         render_project_section(&mut out, eng);
 
+        // v8.2: Impact analysis — what breaks if deleted?
+        render_impact_section(&mut out, eng);
+
         // v7.1: Classification reasoning — why this category?
         if !eng.classification_reasoning.is_empty() {
             out.push_str(&format!("\n  {}  REASONING\n", stars));
@@ -496,4 +499,53 @@ fn render_project_section(out: &mut String, eng: &crate::engine::ClassificationR
             out.push_str(&format!("  Projects: {}\n", consumers.len()));
         }
     }
+}
+
+/// v8.2: Render impact analysis — what happens if this path is deleted.
+fn render_impact_section(out: &mut String, eng: &crate::engine::ClassificationResult) {
+    use crate::impact;
+
+    let analysis = impact::analyze_impact(&eng.path, eng);
+
+    let risk_icon = match analysis.level {
+        impact::ImpactLevel::Low => "🟢",
+        impact::ImpactLevel::Medium => "🟡",
+        impact::ImpactLevel::High => "🟠",
+        impact::ImpactLevel::Critical => "🔴",
+    };
+
+    out.push_str(&format!(
+        "\n  {}  IMPACT ANALYSIS    {}\n",
+        risk_icon,
+        analysis.level.display()
+    ));
+    out.push_str(&format!("{}\n", "─".repeat(60)));
+    out.push_str(&format!("  Risk level:   {}\n", analysis.level.display()));
+    out.push_str(&format!(
+        "  Description:  {}\n",
+        analysis.level.description()
+    ));
+
+    if !analysis.affected.is_empty() {
+        out.push_str("  Affected:\n");
+        for entity in &analysis.affected {
+            if entity.is_critical {
+                out.push_str(&format!(
+                    "   🔴 {} — {}\n",
+                    entity.name, entity.relationship
+                ));
+            } else {
+                out.push_str(&format!("   • {} — {}\n", entity.name, entity.relationship));
+            }
+        }
+    }
+
+    out.push_str(&format!("  Regenerates:  {}\n", analysis.regenerates));
+    out.push_str(&format!("  If deleted:   {}\n", analysis.breaks));
+
+    if !analysis.consequence.is_empty() {
+        out.push_str(&format!("  Summary:      {}\n", analysis.consequence));
+    }
+
+    out.push_str(&format!("  Confidence:   {}%\n", analysis.confidence));
 }

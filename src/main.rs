@@ -21,6 +21,7 @@ mod engine;
 mod errors;
 mod explain;
 mod history;
+mod impact;
 mod inspect;
 mod memory;
 mod ownership;
