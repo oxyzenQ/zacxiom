@@ -153,6 +153,22 @@ pub fn classify(path: &Path) -> ClassificationResult {
                 .reasons
                 .push("Python project workspace detected (pyproject.toml present)".into());
             matched = true;
+        } else if path.join(".git").exists() {
+            result.category = Category::ProjectWorkspace;
+            result.risk_level = RiskLevel::High;
+            result.regenerable = false;
+            result.matched_by = "project-git".to_string();
+            result
+                .reasons
+                .push("Git repository detected (.git directory present)".into());
+            // Set intel for git workspace
+            result.created_by = "git init / git clone".to_string();
+            result.regenerated_by =
+                "git clone (from remote) — local work not regenerable".to_string();
+            result.depends_on = "Remote git repository".to_string();
+            result.deletion_impact =
+                "Project source code permanently lost. Restore from remote or backup.".to_string();
+            matched = true;
         }
     }
 
@@ -954,5 +970,30 @@ mod tests {
                 "classify_fast and classify disagree on: {p}"
             );
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v8.2.1: pyproject.toml + .git classification
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_pyproject_toml_is_build_manifest() {
+        let r = classify(Path::new("pyproject.toml"));
+        assert_eq!(r.category, Category::BuildManifest);
+        assert_eq!(r.matched_by, "python-pyproject");
+    }
+
+    #[test]
+    fn test_pyproject_toml_not_application_config() {
+        let r = classify(Path::new("/home/user/project/pyproject.toml"));
+        assert_ne!(r.category, Category::ApplicationConfiguration);
+        assert_eq!(r.category, Category::BuildManifest);
+    }
+
+    #[test]
+    fn test_pyproject_toml_has_intel() {
+        let r = classify(Path::new("pyproject.toml"));
+        assert!(!r.created_by.is_empty());
+        assert!(!r.deletion_impact.is_empty());
     }
 }

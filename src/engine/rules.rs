@@ -1075,6 +1075,25 @@ fn build_rules() -> Vec<Rule> {
         // source-dir, manifest, and config rules.
         // ═══════════════════════════════════════════════════════
         // ═══════════════════════════════════════════════════════
+        // LAYER 8.7: Python build manifest — before generic .toml rule
+        // pyproject.toml defines project metadata, dependencies, and build system.
+        // Must classify as BuildManifest, not ApplicationConfiguration.
+        // ═══════════════════════════════════════════════════════
+        Rule {
+            name: "python-pyproject",
+            matches: |path, _| {
+                path.file_name().and_then(|n| n.to_str()) == Some("pyproject.toml")
+            },
+            category: Category::BuildManifest,
+            risk_level: RiskLevel::High,
+            regenerable: false,
+            reason: "Python package manifest — defines project metadata, dependencies, and build system",
+            created_by: "Developer / poetry init / hatch new",
+            regenerated_by: "Not regenerable — must recreate manually or restore from VCS",
+            depends_on: "None",
+            deletion_impact: "Project definition lost. Dependencies, scripts, and build configuration must be recreated.",
+        },
+        // ═══════════════════════════════════════════════════════
         // LAYER 9: Config files by extension (generic fallback)
         // ═══════════════════════════════════════════════════════
         Rule {
