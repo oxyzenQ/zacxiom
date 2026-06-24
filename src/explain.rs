@@ -59,19 +59,22 @@ fn category_to_tier(cat: &Category) -> Tier {
         Category::ApplicationConfiguration
         | Category::EnvironmentFile
         | Category::ApplicationData
-        | Category::ShellScript
+        | Category::ProjectAsset
         | Category::ToolchainManager
-        | Category::ToolchainInstallation => Tier::Moderate,
+        | Category::ToolchainInstallation
+        | Category::InstalledSoftware => Tier::Moderate,
 
         Category::Cache
+        | Category::CacheRegistry
         | Category::DockerStorage
         | Category::GameData
         | Category::AIModelCache
+        | Category::DependencySource
         | Category::DownloadedArtifact
         | Category::DependencyLockfile => Tier::High,
 
         Category::BuildCache
-        | Category::PackageCache
+        | Category::GeneratedContent
         | Category::BrowserCache
         | Category::TemporaryFile => Tier::Maximum,
 
@@ -214,11 +217,35 @@ fn render_category(
             "Next build may take longer while artifacts are regenerated.".into(),
             None,
         ),
-        Category::PackageCache => (
+        Category::CacheRegistry => (
             "Package manager download cache.",
             format!("Package managers re-download from their registries. {}", reasons),
             "Next install/update may take longer while packages re-download.".into(),
             None,
+        ),
+        Category::DependencySource => (
+            "Dependency source archive — downloaded package source code.",
+            "Not runtime cache. This is downloaded source code used by build tools. Regenerable via re-download, but large and bandwidth-intensive.".into(),
+            "Builds may fail until dependencies are re-downloaded. Offline builds will break.".into(),
+            Some("Safe to reclaim if disk space is critical and you have internet access.".into()),
+        ),
+        Category::GeneratedContent => (
+            "Generated content — documentation, compiled metadata, or derived files.",
+            "Automatically generated from installed toolchains or source code. Fully regenerable.".into(),
+            "Content will be regenerated on next build or tool invocation.".into(),
+            None,
+        ),
+        Category::InstalledSoftware => (
+            "User-installed software — manually installed tools and packages.",
+            "Not auto-regenerated. Must be explicitly reinstalled if removed.".into(),
+            "Software will be uninstalled and must be reinstalled manually.".into(),
+            Some("Only remove if you no longer need this software.".into()),
+        ),
+        Category::ProjectAsset => (
+            "Project asset — shell scripts, build configs, and other project files.",
+            "Part of the project workspace. Not regenerable — user-authored content.".into(),
+            "Project may break if required scripts or configs are missing.".into(),
+            Some("Never auto-remove. Review carefully before deleting.".into()),
         ),
         Category::BrowserCache => (
             "Browser cache, temporary internet files, and service worker storage.",
@@ -285,12 +312,6 @@ fn render_category(
             format!("Lockfiles ensure every build uses the same dependency versions. Regenerable from the manifest, but team reproducibility depends on committed lockfiles. {}", reasons),
             "Dependency versions may change on next build. Builds may break or produce different outputs until lockfile is regenerated.".into(),
             Some("Regenerable but important. Do not delete in shared projects without team coordination.".into()),
-        ),
-        Category::ShellScript => (
-            "Shell script — automation, build, or deployment script.",
-            "Shell scripts are project tooling. They automate builds, installs, deployments, and other workflows. Not cache.".into(),
-            "Automation and build scripts are lost. CI/CD pipelines or development workflows may break.".into(),
-            Some("Do not auto-delete. Review before removing.".into()),
         ),
         Category::ToolchainManager => (
             "Toolchain manager directory — manages installed compiler and tool versions.",

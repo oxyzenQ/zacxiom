@@ -443,17 +443,19 @@ fn classify(
                     let eng = crate::engine::classify_fast(&e.path);
                     scored.engine_category = eng.0.to_string();
                     scored.engine_confidence = eng.1;
-                    // Bridge: engine category overrides legacy Decision
+                    // v7: Bridge — engine category overrides legacy Decision
                     // to align semantic identity with cleanup policy.
+                    // Toolchain, installed software, dependency source, and
+                    // downloaded artifacts all require --smart — not auto-cleanable.
                     if scored.decision == rules::Decision::Safe {
-                        // Toolchain installations are regenerable but expensive
-                        // and not equivalent to disposable cache — require --smart
                         if eng.0 == "Toolchain Installation"
                             || eng.0 == "Toolchain Manager"
+                            || eng.0 == "Installed Software"
+                            || eng.0 == "Dependency Source"
                         {
                             scored.decision = rules::Decision::LowRisk;
                             scored.risk_reasons.push(
-                                "Installed toolchain: regenerable but expensive to restore, requires --smart".into(),
+                                "Not disposable cache — regenerable but expensive to restore, requires --smart".into(),
                             );
                         }
                         // Downloaded artifacts (cargo registry, SDKs) — also need --smart
@@ -1203,12 +1205,17 @@ mod pipeline_tests {
         let engine_confidence = eng.1;
 
         // Step 4: Bridge override (same logic as main.rs classify())
+        // v7: Toolchain, installed software, dependency source, and downloaded
+        // artifacts all require --smart — not auto-cleanable in safe mode.
         if decision == Decision::Safe {
-            if engine_category == "Toolchain Installation" || engine_category == "Toolchain Manager"
+            if engine_category == "Toolchain Installation"
+                || engine_category == "Toolchain Manager"
+                || engine_category == "Installed Software"
+                || engine_category == "Dependency Source"
             {
                 decision = Decision::LowRisk;
                 risk_reasons.push(
-                    "Installed toolchain: regenerable but expensive to restore, requires --smart"
+                    "Not disposable cache — regenerable but expensive to restore, requires --smart"
                         .into(),
                 );
             } else if engine_category.contains("Downloaded") {
@@ -1302,7 +1309,7 @@ mod pipeline_tests {
         let (decision, _tier, engine_cat) =
             classify_via_pipeline("/home/user/project/target/debug/deps/app-abc.rlib");
 
-        assert_eq!(engine_cat, "Build Cache");
+        assert_eq!(engine_cat, "Build Output");
         assert_eq!(decision, Decision::Safe);
         assert!(decision.is_cleanable(false, false));
     }
@@ -1430,7 +1437,7 @@ mod pipeline_tests {
         let (decision, _tier, engine_cat) =
             classify_via_pipeline("/home/user/project/target/debug/deps/app-abc.rlib");
 
-        assert_eq!(engine_cat, "Build Cache");
+        assert_eq!(engine_cat, "Build Output");
         assert_eq!(decision, Decision::Safe);
         assert!(decision.is_cleanable(false, false)); // still auto-cleanable
     }

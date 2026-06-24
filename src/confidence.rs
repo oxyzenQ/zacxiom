@@ -84,11 +84,13 @@ pub fn confidence(file: &ClassifiedFile) -> Tier {
         return Tier::Protected;
     }
 
-    // v6.4.0: Engine category override — align identity with confidence.
-    // Installed toolchains are not disposable cache even if legacy pipeline
-    // scored them as Safe/Developer.
+    // v7: Engine category override — align identity with confidence.
+    // Toolchain, installed software, and dependency source files should NOT
+    // get ★★★★★ Maximum even if legacy pipeline scored them Safe/Developer.
     if file.engine_category == "Toolchain Installation"
         || file.engine_category == "Toolchain Manager"
+        || file.engine_category == "Installed Software"
+        || file.engine_category == "Dependency Source"
     {
         return match file.decision {
             Decision::Safe | Decision::LowRisk => Tier::High, // ★★★★ — requires --smart

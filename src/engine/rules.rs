@@ -5,12 +5,17 @@
 //!
 //! Rules are ordered by priority. First match wins.
 //! Each rule specifies a path pattern, resulting category, and risk level.
+//!
+//! v7: Rules carry artifact intelligence — ownership, regeneration,
+//! dependency, and deletion impact metadata.
 
 use super::types::{Category, RiskLevel};
 use std::path::Path;
 use std::sync::OnceLock;
 
 /// A single classification rule.
+///
+/// v7: Enriched with artifact intelligence fields.
 pub struct Rule {
     pub name: &'static str,
     /// Match logic: returns true if this rule applies to the given path.
@@ -19,6 +24,15 @@ pub struct Rule {
     pub risk_level: RiskLevel,
     pub regenerable: bool,
     pub reason: &'static str,
+    // ── v7: Artifact Intelligence fields ──────────────────────
+    /// Who created this artifact? (e.g. "Cargo", "Rustup", "npm", "Browser")
+    pub created_by: &'static str,
+    /// How to regenerate this artifact? (e.g. "cargo build", "rustup toolchain install")
+    pub regenerated_by: &'static str,
+    /// What does this artifact depend on? (e.g. "Cargo.toml", "package.json")
+    pub depends_on: &'static str,
+    /// What happens if this artifact is deleted?
+    pub deletion_impact: &'static str,
 }
 
 /// Build the full rule database in priority order.
@@ -46,6 +60,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "Installed executable — removing breaks software",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "sys-bin-root",
@@ -61,6 +83,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "System binary — critical for OS operation",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "sys-etc",
@@ -69,6 +99,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "System-wide configuration — controls OS behavior",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "sys-lib",
@@ -84,6 +122,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "System libraries and shared resources",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "sys-boot",
@@ -92,6 +138,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "Boot files — deletion prevents system startup",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "sys-virtual",
@@ -104,6 +158,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "Virtual kernel interface — not real files",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "sys-opt-bin",
@@ -116,6 +178,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "Optional installed software",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 2: User home root — never clean the whole thing
@@ -131,6 +201,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "Home directory — contains mixed personal data and cache",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 3.5: User-installed software — protected
@@ -145,6 +223,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "User-installed binary — removing breaks locally installed software",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "user-bin-dir",
@@ -153,6 +239,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "User software directory — contains locally installed executables",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 3.5b: Rustup toolchain manager — all paths protected
@@ -168,6 +262,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Rust toolchain manager — manages installed Rust compiler versions via rustup",
+
+            created_by: "Rustup",
+
+            regenerated_by: "rustup toolchain install",
+
+            depends_on: "rustup",
+
+            deletion_impact: "All installed Rust toolchains lost. Must reinstall via rustup.",
         },
         Rule {
             name: "rustup-any",
@@ -182,6 +284,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Rustup toolchain data — installed development tooling, not disposable cache",
+
+            created_by: "Rustup",
+
+            regenerated_by: "rustup toolchain install",
+
+            depends_on: "rustup",
+
+            deletion_impact: "Toolchain files lost. Reinstall required.",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 3.6: Version control — never clean
@@ -197,6 +307,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "Git repository data — deleting corrupts the repository. Not regenerable.",
+
+            created_by: "Git",
+
+            regenerated_by: "git clone / git fetch",
+
+            depends_on: "Remote repository",
+
+            deletion_impact: "Repository history corrupted. May lose uncommitted work.",
         },
         Rule {
             name: "vcs-svn-hg",
@@ -210,6 +328,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "Version control metadata — deleting corrupts the working copy",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 4: Security credentials (was L3) — never touch
@@ -221,6 +347,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "SSH keys and authorized_hosts — identity credentials",
+
+            created_by: "User/ssh-keygen",
+
+            regenerated_by: "ssh-keygen (creates new keys, old ones lost)",
+
+            depends_on: "None",
+
+            deletion_impact: "Permanent access loss. Cannot authenticate to remote systems.",
         },
         Rule {
             name: "sec-gpg",
@@ -231,6 +365,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "GPG encryption keys — cannot be regenerated",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "sec-key-file",
@@ -247,6 +389,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Critical,
             regenerable: false,
             reason: "Cryptographic key file — permanent access loss if deleted",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 4: User content directories — never auto-clean
@@ -261,6 +411,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Desktop files — user's primary workspace",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "user-documents",
@@ -272,6 +430,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Personal documents — may contain irreplaceable files",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "user-music",
@@ -282,6 +448,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Music/media library — user content",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "user-pictures",
@@ -293,6 +467,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Picture library — user content",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "user-videos",
@@ -304,6 +486,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Video library — user content",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "user-downloads",
@@ -317,6 +507,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Moderate,
             regenerable: false,
             reason: "Downloaded files — review before deleting; old ISOs/installers usually safe",
+
+            created_by: "User/Browser",
+
+            regenerated_by: "Not regenerable",
+
+            depends_on: "None",
+
+            deletion_impact: "Downloaded files permanently lost.",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 5: Configuration files — manual review
@@ -334,6 +532,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Shell configuration — defines your terminal environment and aliases",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "config-git",
@@ -345,6 +551,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Git configuration — your identity and settings",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "config-env",
@@ -356,6 +570,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Environment variables file — may contain secrets and API keys",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "config-app",
@@ -364,6 +586,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Moderate,
             regenerable: false,
             reason: "Application settings — apps recreate defaults but customizations are lost",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 6: Cache directories — primary targets
@@ -375,6 +605,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Cargo git checkouts — redownloaded on next cargo build, but large and slow to re-clone",
+
+            created_by: "Cargo",
+
+            regenerated_by: "cargo fetch",
+
+            depends_on: "Cargo.toml",
+
+            deletion_impact: "Git checkouts removed. Must re-clone on next build.",
         },
         Rule {
             name: "cache-build-gradle",
@@ -383,6 +621,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "Gradle build cache — redownloaded on next build",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "cache-build-target",
@@ -399,6 +645,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "Rust build artifacts — regenerated by cargo build",
+
+            created_by: "Cargo",
+
+            regenerated_by: "cargo build",
+
+            depends_on: "Cargo.toml + source code",
+
+            deletion_impact: "Build output removed. Next build starts from scratch.",
         },
         Rule {
             name: "cache-build-node-dist",
@@ -417,6 +671,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "Node.js build output — regenerated by build command",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "cache-build-generic",
@@ -439,6 +701,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Build output directory — regenerated by build tools",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "cache-package-npm",
@@ -447,26 +717,50 @@ fn build_rules() -> Vec<Rule> {
                     || lower.contains("/.cache/yarn/")
                     || lower.contains("/.cache/pnpm/")
             },
-            category: Category::PackageCache,
+            category: Category::CacheRegistry,
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "JavaScript package cache — redownloaded on npm install",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "cache-package-pip",
             matches: |_, lower| lower.contains("/.cache/pip/") || lower.contains("/.cache/uv/"),
-            category: Category::PackageCache,
+            category: Category::CacheRegistry,
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "Python package cache — redownloaded from PyPI",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "cache-package-maven",
             matches: |_, lower| lower.contains("/.m2/repository/"),
-            category: Category::PackageCache,
+            category: Category::CacheRegistry,
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "Maven repository — redownloaded on next build",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "cache-browser",
@@ -483,6 +777,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "Browser cache — rebuilt automatically while browsing",
+
+            created_by: "Browser",
+
+            regenerated_by: "Browsing websites",
+
+            depends_on: "None",
+
+            deletion_impact: "Websites load slower on first visit. No data loss.",
         },
         Rule {
             name: "cache-user",
@@ -491,6 +793,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Application cache — applications regenerate when needed",
+
+            created_by: "Application",
+
+            regenerated_by: "Application usage",
+
+            depends_on: "None",
+
+            deletion_impact: "Application may run slower until cache rebuilds.",
         },
         Rule {
             name: "cache-tmp",
@@ -499,6 +809,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "Temporary file — designed to be cleaned",
+
+            created_by: "System/Application",
+
+            regenerated_by: "Not regenerable (temporary)",
+
+            depends_on: "None",
+
+            deletion_impact: "No impact. Temporary files are safe to remove.",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 7: Application-specific caches
@@ -514,6 +832,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Docker image layers and build cache",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "app-ai-models",
@@ -526,6 +852,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "AI model cache — can be redownloaded from HuggingFace/Ollama",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "app-steam-shader",
@@ -538,6 +872,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "GPU shader cache — regenerated when games launch",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "app-steam-compat",
@@ -546,6 +888,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Proton compatibility data — Steam reinstalls when needed",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "app-discord",
@@ -554,6 +904,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Minimal,
             regenerable: true,
             reason: "Discord media cache — redownloaded as needed",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "app-vscode",
@@ -562,6 +920,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "VS Code cache — extensions re-downloaded, settings preserved",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "app-trash",
@@ -572,6 +938,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: false,
             reason: "Desktop trash — already deleted files; restore before cleaning if needed",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "app-cargo-registry",
@@ -582,6 +956,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Cargo crate registry — redownloaded on next build, but large",
+
+            created_by: "Cargo",
+
+            regenerated_by: "cargo fetch / cargo build",
+
+            depends_on: "Cargo.toml",
+
+            deletion_impact: "Next build must re-download all dependencies. Offline builds will fail.",
         },
         Rule {
             name: "app-node-modules",
@@ -590,6 +972,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Node.js dependencies — reinstalled from package.json, but large and slow to restore",
+
+            created_by: "npm/yarn/pnpm",
+
+            regenerated_by: "npm install / yarn install",
+
+            depends_on: "package.json",
+
+            deletion_impact: "Project dependencies removed. Must re-install before development.",
         },
         Rule {
             name: "app-gradle",
@@ -598,6 +988,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Low,
             regenerable: true,
             reason: "Gradle wrapper and build cache",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 8: Application data — review before cleaning
@@ -609,6 +1007,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Moderate,
             regenerable: false,
             reason: "User application data — may contain saved states and databases",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "data-browser-profile",
@@ -620,6 +1026,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Browser profile — bookmarks, passwords, extensions",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 8.4: Rustup toolchain management
@@ -646,6 +1060,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Rust package manifest — defines project metadata, dependencies, and build configuration",
+
+            created_by: "User/Developer",
+
+            regenerated_by: "Not regenerable",
+
+            depends_on: "None",
+
+            deletion_impact: "Project definition lost. Build system will fail.",
         },
         Rule {
             name: "rust-cargo-lock",
@@ -656,6 +1078,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: true,
             reason: "Rust dependency lockfile — ensures reproducible builds by pinning dependency versions",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "node-package-json",
@@ -666,6 +1096,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Node.js package manifest — defines project metadata, dependencies, and scripts",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "node-package-lock",
@@ -679,6 +1117,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: true,
             reason: "Node.js dependency lockfile — ensures reproducible installs by pinning versions",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "go-mod",
@@ -690,6 +1136,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Go module definition — defines module path and dependency requirements",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
         Rule {
             name: "source-dir",
@@ -707,14 +1161,30 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::High,
             regenerable: false,
             reason: "Source code directory — contains project source files",
+
+            created_by: "User/Developer",
+
+            regenerated_by: "Not regenerable",
+
+            depends_on: "None",
+
+            deletion_impact: "Source code permanently lost.",
         },
         Rule {
             name: "shell-script",
             matches: |path, _| path.extension().and_then(|e| e.to_str()) == Some("sh"),
-            category: Category::ShellScript,
+            category: Category::ProjectAsset,
             risk_level: RiskLevel::Moderate,
             regenerable: false,
             reason: "Shell script — automation, build, or deployment script",
+
+            created_by: "User/Developer",
+
+            regenerated_by: "Not regenerable",
+
+            depends_on: "None",
+
+            deletion_impact: "Automation and build scripts lost. Workflows may break.",
         },
         // ═══════════════════════════════════════════════════════
         // LAYER 8.6: Rustup toolchain management (MOVED to 8.4 above)
@@ -741,6 +1211,14 @@ fn build_rules() -> Vec<Rule> {
             risk_level: RiskLevel::Moderate,
             regenerable: false,
             reason: "Configuration file — settings customized by user or application",
+
+            created_by: "",
+
+            regenerated_by: "",
+
+            depends_on: "",
+
+            deletion_impact: "",
         },
     ]
 }

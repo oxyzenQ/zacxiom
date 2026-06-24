@@ -41,6 +41,11 @@ pub fn classify(path: &Path) -> ClassificationResult {
             result.regenerable = rule.regenerable;
             result.matched_by = rule.name.to_string();
             result.reasons.push(rule.reason.to_string());
+            // v7: Propagate artifact intelligence fields
+            result.created_by = rule.created_by.to_string();
+            result.regenerated_by = rule.regenerated_by.to_string();
+            result.depends_on = rule.depends_on.to_string();
+            result.deletion_impact = rule.deletion_impact.to_string();
             matched = true;
             break;
         }
@@ -297,11 +302,11 @@ mod tests {
     #[test]
     fn test_shell_script_classification() {
         let r = classify(Path::new("scripts/install.sh"));
-        assert_eq!(r.category, Category::ShellScript);
+        assert_eq!(r.category, Category::ProjectAsset);
         assert_eq!(r.matched_by, "shell-script");
 
         let r2 = classify(Path::new("/home/user/project/build.sh"));
-        assert_eq!(r2.category, Category::ShellScript);
+        assert_eq!(r2.category, Category::ProjectAsset);
     }
 
     #[test]
