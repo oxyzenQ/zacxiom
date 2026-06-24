@@ -257,9 +257,10 @@ fn classify_ownership_type(path: &Path, project: &ProjectInfo) -> OwnershipType 
     if path_str.contains("/target/")
         || path_str.starts_with("target/")
         || path_str.starts_with("./target/")
+        || path_str == "target"
+        || path_str.ends_with("/target")
         || path_str.contains("/dist/")
         || path_str.contains("/build/")
-        || path_str.ends_with("/target")
     {
         return OwnershipType::BuildArtifact;
     }
@@ -283,12 +284,10 @@ fn classify_ownership_type(path: &Path, project: &ProjectInfo) -> OwnershipType 
         return OwnershipType::PackageManagerCache;
     }
 
-    // Configuration files
+    // Configuration files — only primary manifests (lockfiles are regenerable)
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if file_name == "Cargo.toml"
-        || file_name == "Cargo.lock"
         || file_name == "package.json"
-        || file_name == "package-lock.json"
         || file_name == "go.mod"
         || file_name == "pyproject.toml"
     {

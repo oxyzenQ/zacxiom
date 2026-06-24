@@ -257,45 +257,39 @@ fn build_consequence_summary(
     regenerates: &str,
     breaks: &str,
 ) -> String {
+    let b = breaks.trim_end_matches('.');
+    let r = regenerates.trim_end_matches('.');
     match level {
         ImpactLevel::Low => {
             if affected.is_empty() {
-                format!("Minimal impact. {} Regeneration: {}", breaks, regenerates)
+                format!("Minimal impact. {b}. Regeneration: {r}.")
             } else {
                 let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
                 format!(
-                    "Low impact. Affects: {}. {}. Regeneration: {}",
-                    names.join(", "),
-                    breaks,
-                    regenerates
+                    "Low impact. Affects: {}. {b}. Regeneration: {r}.",
+                    names.join(", ")
                 )
             }
         }
         ImpactLevel::Medium => {
             let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
             format!(
-                "Moderate impact. Affects: {}. {}. Restoration: {}",
-                names.join(", "),
-                breaks,
-                regenerates
+                "Moderate impact. Affects: {}. {b}. Restoration: {r}.",
+                names.join(", ")
             )
         }
         ImpactLevel::High => {
             let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
             format!(
-                "Significant impact. Affects: {}. {}. {}",
-                names.join(", "),
-                breaks,
-                regenerates
+                "Significant impact. Affects: {}. {b}. {r}.",
+                names.join(", ")
             )
         }
         ImpactLevel::Critical => {
             let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
             format!(
-                "CRITICAL — permanent damage. Affects: {}. {}. {}",
-                names.join(", "),
-                breaks,
-                regenerates
+                "CRITICAL — permanent damage. Affects: {}. {b}. {r}.",
+                names.join(", ")
             )
         }
     }
