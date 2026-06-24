@@ -582,10 +582,10 @@ fn build_rules() -> Vec<Rule> {
         Rule {
             name: "app-node-modules",
             matches: |_, lower| lower.contains("/node_modules/"),
-            category: Category::PackageCache,
+            category: Category::DownloadedArtifact,
             risk_level: RiskLevel::Low,
             regenerable: true,
-            reason: "Node.js dependencies — reinstalled from package.json",
+            reason: "Node.js dependencies — reinstalled from package.json, but large and slow to restore",
         },
         Rule {
             name: "app-gradle",

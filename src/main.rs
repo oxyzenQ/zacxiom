@@ -1181,9 +1181,21 @@ mod pipeline_tests {
         // Step 1: Legacy cache classifier
         let domain = cache::classify(&path_buf);
 
-        // Step 2: Risk scoring (simplified — Developer domain gives Safe)
-        let mut decision = Decision::Safe;
-        let mut risk_reasons: Vec<String> = vec!["fully regenerable cache".into()];
+        // Step 2: Risk scoring — simplified but domain-aware.
+        // Matches the logic in risk.rs domain_regenerability():
+        //   Browser/BuildArtifact/PackageManager/Developer → Fully → Safe
+        //   System → Partially → LowRisk (roughly)
+        //   UserData/Unknown → NotRegenerable → Moderate (roughly)
+        let (mut decision, risk_score) = match domain {
+            crate::rules::CacheDomain::Browser
+            | crate::rules::CacheDomain::BuildArtifact
+            | crate::rules::CacheDomain::PackageManager
+            | crate::rules::CacheDomain::Developer => (Decision::Safe, 0.0),
+            crate::rules::CacheDomain::System => (Decision::LowRisk, 0.15),
+            crate::rules::CacheDomain::UserData => (Decision::Moderate, 0.3),
+            crate::rules::CacheDomain::Unknown => (Decision::Moderate, 0.3),
+        };
+        let mut risk_reasons: Vec<String> = vec![];
 
         // Step 3: Engine fast classify
         let eng = crate::engine::classify_fast(&path_buf);
@@ -1212,7 +1224,7 @@ mod pipeline_tests {
             size: 1000,
             cache_domain: domain,
             ownership: Ownership::User { uid: 1000 },
-            risk_score: 0.0,
+            risk_score,
             risk_reasons,
             decision: decision.clone(),
             engine_category,
@@ -1356,5 +1368,83 @@ mod pipeline_tests {
                 leaks.len()
             );
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v6.4.0: node_modules & cargo registry policy audit
+    // These are regenerable but expensive to restore — should
+    // require --smart, NOT be auto-cleanable in safe mode.
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_node_modules_not_cleanable_in_safe_mode() {
+        // node_modules should be DownloadedArtifact → bridge → LowRisk
+        let (decision, _tier, engine_cat) =
+            classify_via_pipeline("/home/user/project/node_modules/lodash/index.js");
+
+        assert_eq!(engine_cat, "Downloaded Artifact");
+        assert_eq!(decision, Decision::LowRisk);
+        assert!(
+            !decision.is_cleanable(false, false),
+            "node_modules should NOT be cleanable in safe mode"
+        );
+        assert!(
+            decision.is_cleanable(true, false),
+            "node_modules should be cleanable with --smart"
+        );
+    }
+
+    #[test]
+    fn test_cargo_registry_not_cleanable_in_safe_mode() {
+        // Cargo registry should be DownloadedArtifact → bridge → LowRisk
+        let (decision, _tier, engine_cat) = classify_via_pipeline(
+            "/home/user/.cargo/registry/cache/index.crates.io-abc/syn-1.0.crate",
+        );
+
+        assert_eq!(engine_cat, "Downloaded Artifact");
+        assert_eq!(decision, Decision::LowRisk);
+        assert!(
+            !decision.is_cleanable(false, false),
+            "cargo registry should NOT be cleanable in safe mode"
+        );
+        assert!(
+            decision.is_cleanable(true, false),
+            "cargo registry should be cleanable with --smart"
+        );
+    }
+
+    #[test]
+    fn test_browser_cache_still_cleanable_in_safe_mode() {
+        // Browser cache should remain ★★★★★ auto-cleanable
+        let (decision, _tier, engine_cat) =
+            classify_via_pipeline("/home/user/.cache/mozilla/firefox/profile/cache2/entry");
+
+        assert_eq!(engine_cat, "Browser Cache");
+        assert_eq!(decision, Decision::Safe);
+        assert!(decision.is_cleanable(false, false)); // still auto-cleanable
+    }
+
+    #[test]
+    fn test_build_target_still_cleanable_in_safe_mode() {
+        // Rust target/ directory should remain ★★★★★ auto-cleanable
+        let (decision, _tier, engine_cat) =
+            classify_via_pipeline("/home/user/project/target/debug/deps/app-abc.rlib");
+
+        assert_eq!(engine_cat, "Build Cache");
+        assert_eq!(decision, Decision::Safe);
+        assert!(decision.is_cleanable(false, false)); // still auto-cleanable
+    }
+
+    #[test]
+    fn test_downloads_not_cleanable_in_safe_mode() {
+        // ~/Downloads should be UserDocument → Moderate → requires --force
+        let (decision, _tier, engine_cat) =
+            classify_via_pipeline("/home/user/Downloads/installer.iso");
+
+        assert_eq!(engine_cat, "User Document");
+        assert_eq!(decision, Decision::Moderate);
+        assert!(!decision.is_cleanable(false, false)); // NOT cleanable in safe mode
+        assert!(!decision.is_cleanable(true, false)); // NOT cleanable with --smart either
+        assert!(decision.is_cleanable(false, true)); // only with --force
     }
 }

@@ -65,28 +65,59 @@ pub fn summarize(files: &[ClassifiedFile]) -> Vec<DomainSummary> {
                 .iter()
                 .filter(|e| matches!(e.decision, Decision::Safe))
                 .count();
+            let low_risk_count = entries
+                .iter()
+                .filter(|e| matches!(e.decision, Decision::LowRisk))
+                .count();
             let blocked_count = entries
                 .iter()
                 .filter(|e| matches!(e.decision, Decision::HighRisk | Decision::Protected))
                 .count();
 
-            let risk_label = if avg_risk < 0.15 {
+            let dominant_decision = if safe_count > file_count / 2 {
                 "SAFE"
-            } else if avg_risk < 0.35 {
-                "LOW"
-            } else if avg_risk < 0.6 {
-                "MEDIUM"
-            } else if avg_risk < 0.85 {
-                "HIGH"
+            } else if blocked_count > file_count / 2 {
+                "BLOCKED"
+            } else if low_risk_count > file_count / 2 {
+                "LOWRISK"
             } else {
-                "CRITICAL"
+                "MIXED"
+            };
+
+            // v6.4.0: risk_label must reflect the dominant decision, not just
+            // the raw average risk score. The bridge override changes toolchain
+            // files from Safe → LowRisk, but their risk_score remains near 0,
+            // so avg_risk < 0.15 → "SAFE" even though dominant_decision is "LOWRISK".
+            // Use dominant_decision as the primary signal, with risk_score as refinement.
+            let risk_label = match dominant_decision {
+                "SAFE" => "SAFE",
+                "BLOCKED" => "BLOCKED",
+                "LOWRISK" => "LOWRISK",
+                _ => {
+                    // Mixed — fall back to risk score for granularity
+                    if avg_risk < 0.15 {
+                        "SAFE"
+                    } else if avg_risk < 0.35 {
+                        "LOW"
+                    } else if avg_risk < 0.6 {
+                        "MEDIUM"
+                    } else if avg_risk < 0.85 {
+                        "HIGH"
+                    } else {
+                        "CRITICAL"
+                    }
+                }
             };
 
             let status = if blocked_count > file_count / 2 {
                 DomainStatus::Blocked
             } else if safe_count > file_count / 2 {
                 DomainStatus::Safe
-            } else if safe_count > 0 {
+            } else if low_risk_count > file_count / 2 {
+                // v6.4.0: LowRisk-dominant domains are "Reclaimable" —
+                // they require --smart but are still cleanable.
+                DomainStatus::Reclaimable
+            } else if safe_count > 0 || low_risk_count > 0 {
                 DomainStatus::Reclaimable
             } else if entries
                 .iter()
@@ -95,25 +126,6 @@ pub fn summarize(files: &[ClassifiedFile]) -> Vec<DomainSummary> {
                 DomainStatus::InUse
             } else {
                 DomainStatus::Mixed
-            };
-
-            let dominant_decision = if safe_count > file_count / 2 {
-                "SAFE"
-            } else if blocked_count > file_count / 2 {
-                "BLOCKED"
-            } else {
-                // v6.4.0: Distinguish LOWRISK-dominant from truly mixed.
-                // When most cleanable files are LowRisk (e.g. toolchains),
-                // report "LOWRISK" so the display tier shows ★★★★ not ★★★★★.
-                let low_risk_count = entries
-                    .iter()
-                    .filter(|e| matches!(e.decision, Decision::LowRisk))
-                    .count();
-                if low_risk_count > file_count / 2 {
-                    "LOWRISK"
-                } else {
-                    "MIXED"
-                }
             };
 
             DomainSummary {
@@ -285,5 +297,98 @@ mod tests {
         assert_eq!(browser.file_count, 2);
         assert_eq!(browser.total_size, 300);
         assert_eq!(browser.status, DomainStatus::Safe);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v6.4.0: Domain label must reflect dominant decision
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_lowrisk_domain_label_is_lowrisk_not_safe() {
+        // Toolchain files: LowRisk decision but near-zero risk score.
+        // Domain label must say "LOWRISK", not "SAFE".
+        let files = vec![
+            cf(
+                "/home/user/.rustup/toolchains/stable-x86_64/bin/rustc",
+                1000,
+                CacheDomain::Developer,
+                Decision::LowRisk,
+                0.01,
+            ),
+            cf(
+                "/home/user/.rustup/toolchains/stable-x86_64/bin/cargo",
+                800,
+                CacheDomain::Developer,
+                Decision::LowRisk,
+                0.02,
+            ),
+            cf(
+                "/home/user/.rustup/toolchains/stable-x86_64/lib/libstd.so",
+                2000,
+                CacheDomain::Developer,
+                Decision::LowRisk,
+                0.01,
+            ),
+        ];
+        let summaries = summarize(&files);
+        let rustup = summaries
+            .iter()
+            .find(|s| s.domain.contains("Rustup"))
+            .unwrap();
+        assert_eq!(rustup.risk_label, "LOWRISK");
+        assert_eq!(rustup.dominant_decision, "LOWRISK");
+        assert_eq!(rustup.status, DomainStatus::Reclaimable);
+    }
+
+    #[test]
+    fn test_safe_domain_label_still_safe() {
+        // Regular browser cache: Safe decision → label should be "SAFE"
+        let files = vec![
+            cf(
+                "/home/user/.cache/mozilla/firefox/cache2/entry1",
+                100,
+                CacheDomain::Browser,
+                Decision::Safe,
+                0.05,
+            ),
+            cf(
+                "/home/user/.cache/mozilla/firefox/cache2/entry2",
+                200,
+                CacheDomain::Browser,
+                Decision::Safe,
+                0.03,
+            ),
+        ];
+        let summaries = summarize(&files);
+        let browser = summaries
+            .iter()
+            .find(|s| s.domain.contains("Browser"))
+            .unwrap();
+        assert_eq!(browser.risk_label, "SAFE");
+        assert_eq!(browser.dominant_decision, "SAFE");
+    }
+
+    #[test]
+    fn test_mixed_domain_uses_risk_score_fallback() {
+        // Mixed decisions → risk_label falls back to avg_risk score
+        let files = vec![
+            cf("/tmp/a", 100, CacheDomain::Unknown, Decision::Safe, 0.05),
+            cf(
+                "/tmp/b",
+                100,
+                CacheDomain::Unknown,
+                Decision::Moderate,
+                0.40,
+            ),
+        ];
+        let summaries = summarize(&files);
+        let unknown = summaries
+            .iter()
+            .find(|s| s.domain.contains("Application"))
+            .unwrap();
+        // 1 Safe, 1 Moderate — neither > half, so MIXED
+        assert_eq!(unknown.dominant_decision, "MIXED");
+        // avg_risk = 0.225 → "LOW"
+        assert_eq!(unknown.risk_label, "LOW");
     }
 }
