@@ -14,6 +14,7 @@ mod cli;
 mod color;
 mod confidence;
 mod dependency;
+mod discovery;
 mod display;
 mod domain;
 mod engine;
@@ -849,7 +850,8 @@ fn run_explain(path: &str) {
         let threads = 1;
         let classified = classify(entries, &ctx, threads);
         let exp = explain::explain_path(path, &classified);
-        let eng = crate::engine::classify(&target);
+        let mut eng = crate::engine::classify(&target);
+        boost_confidence_from_discovery(&mut eng);
         println!("{}", explain::render_card(&exp, Some(&eng)));
         return;
     }
@@ -861,8 +863,27 @@ fn run_explain(path: &str) {
     let classified = classify(entries, &ctx, threads);
 
     let exp = explain::explain_path(path, &classified);
-    let eng = crate::engine::classify(&PathBuf::from(path));
+    let mut eng = crate::engine::classify(&PathBuf::from(path));
+    boost_confidence_from_discovery(&mut eng);
     println!("{}", explain::render_card(&exp, Some(&eng)));
+}
+
+/// v8.0: Boost confidence when project ownership is discovered.
+fn boost_confidence_from_discovery(eng: &mut crate::engine::ClassificationResult) {
+    if let Some(project) = discovery::find_project_for_path(&eng.path) {
+        // Only boost if not already at max
+        if eng.confidence_score < 95 {
+            eng.confidence_score = (eng.confidence_score + 10).min(99);
+        }
+        let reason = format!(
+            "✓ Project ownership discovered: {} ({})",
+            project.name,
+            project.ecosystem.display()
+        );
+        if !eng.confidence_reasons.contains(&reason) {
+            eng.confidence_reasons.push(reason);
+        }
+    }
 }
 
 /// v6.3.2: Unknown domain intelligence — what's in the Unknown bucket?

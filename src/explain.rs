@@ -354,6 +354,7 @@ pub fn explain_file(file: &ClassifiedFile) -> Explanation {
 /// Render an explanation card with confidence (v6.3).
 /// v7.1: Renders artifact intelligence — created_by, regenerated_by,
 /// depends_on, deletion_impact, and classification reasoning.
+/// v8.0: Renders PROJECT and PROJECT CONSUMERS from discovery engine.
 pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::ClassificationResult>) -> String {
     let mut out = String::new();
     let stars = exp.tier.stars();
@@ -395,6 +396,9 @@ pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::Classification
             }
         }
 
+        // v8.0: Project discovery — which project owns this path?
+        render_project_section(&mut out, eng);
+
         // v7.1: Classification reasoning — why this category?
         if !eng.classification_reasoning.is_empty() {
             out.push_str(&format!("\n  {}  REASONING\n", stars));
@@ -414,4 +418,50 @@ pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::Classification
         }
     }
     out
+}
+
+/// v8.0: Render project ownership and consumer information from the discovery engine.
+fn render_project_section(out: &mut String, eng: &crate::engine::ClassificationResult) {
+    use crate::discovery;
+
+    let path_str = eng.path.to_string_lossy();
+
+    // Check if this path belongs to a known project
+    if let Some(project) = discovery::find_project_for_path(&eng.path) {
+        out.push_str("\n  PROJECT\n");
+        out.push_str(&format!("{}\n", "─".repeat(60)));
+        out.push_str(&format!("  Project:    {}\n", project.name));
+        out.push_str(&format!("  Ecosystem:  {}\n", project.ecosystem.display()));
+        out.push_str(&format!("  Root:       {}\n", project.root.display()));
+        if let Some(primary) = project.primary_manifest() {
+            out.push_str(&format!(
+                "  Manifest:   {}\n",
+                primary.file_name().unwrap_or_default().to_string_lossy()
+            ));
+        }
+        return;
+    }
+
+    // Check if this path is a registry/cache that projects consume
+    let lower = path_str.to_lowercase();
+    if lower.contains("/.cargo/registry")
+        || lower.contains("/.npm/")
+        || lower.contains("/.cache/pip/")
+        || lower.contains("/.cache/uv/")
+    {
+        let consumers = discovery::find_projects_using_registry(&eng.path);
+        if !consumers.is_empty() {
+            out.push_str("\n  PROJECT CONSUMERS\n");
+            out.push_str(&format!("{}\n", "─".repeat(60)));
+            out.push_str("  Referenced by:\n");
+            for consumer in &consumers {
+                out.push_str(&format!(
+                    "   • {} ({})\n",
+                    consumer.name,
+                    consumer.ecosystem.display()
+                ));
+            }
+            out.push_str(&format!("  Projects: {}\n", consumers.len()));
+        }
+    }
 }
