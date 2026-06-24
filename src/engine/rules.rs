@@ -541,10 +541,12 @@ fn build_rules() -> Vec<Rule> {
         Rule {
             name: "cache-build-target",
             matches: |_, lower| {
-                // Match bare "target", "project/target", and "/target/" subdirectories.
+                // Match bare "target", "project/target", "/target/" subdirectories,
+                // AND bare "target/" prefix for children like target/debug, target/release.
                 // Exclude /usr/src (system territory) and /var/ (system data).
                 lower == "target"
                     || lower.ends_with("/target")
+                    || lower.starts_with("target/")
                     || (lower.contains("/target/")
                         && !lower.starts_with("/usr/")
                         && !lower.starts_with("/var/"))
@@ -625,6 +627,42 @@ fn build_rules() -> Vec<Rule> {
             regenerated_by: "npm install / yarn install / pnpm install",
             depends_on: "npm registry (registry.npmjs.org)",
             deletion_impact: "Next install must re-download all packages from registry.",
+        },
+        // ═══════════════════════════════════════════════════════
+        // LAYER 6.5: npm ecosystem — npx cache, npm cache artifacts
+        // MUST come before generic cache/config rules to prevent
+        // ~/.npm/* from being classified as Unknown or ApplicationData.
+        // ═══════════════════════════════════════════════════════
+        Rule {
+            name: "npm-npx-cache",
+            matches: |_, lower| {
+                lower.contains("/.npm/_npx/")
+                    || lower.ends_with("/.npm/_npx")
+            },
+            category: Category::DownloadedArtifact,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "npx package cache — downloaded on-demand by npx, regenerable via re-download",
+            created_by: "npx (Node.js package runner)",
+            regenerated_by: "npx <package> (auto-downloads on next use)",
+            depends_on: "npm registry (registry.npmjs.org)",
+            deletion_impact: "Next npx invocation re-downloads packages from npm registry. No data loss.",
+        },
+        Rule {
+            name: "npm-cache-generic",
+            matches: |_, lower| {
+                // Catch ~/.npm/ subdirectories not covered by specific rules
+                // Exclude ~/.npm/_cacache/ which is already handled as CacheRegistry
+                lower.contains("/.npm/") && !lower.contains("/_cacache/")
+            },
+            category: Category::ApplicationData,
+            risk_level: RiskLevel::Low,
+            regenerable: true,
+            reason: "npm metadata and state — package manager configuration and cache",
+            created_by: "npm (Node.js package manager)",
+            regenerated_by: "npm install (metadata rebuilt from registry)",
+            depends_on: "npm registry (registry.npmjs.org)",
+            deletion_impact: "npm configuration and metadata lost. Can be rebuilt via npm install.",
         },
         Rule {
             name: "cache-package-pip",

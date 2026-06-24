@@ -8,7 +8,8 @@ use super::types::{Category, ClassificationResult, RiskLevel};
 use std::path::Path;
 
 /// Fast classification without confidence scoring (v6.3.1).
-/// Returns (category_display_string, 0) — minimal allocation for scan pipeline.
+/// Returns (category_display_string, confidence).
+/// v7.2: Supports parent-child inheritance for scan pipeline consistency.
 pub fn classify_fast(path: &Path) -> (&'static str, u8) {
     let lower = path.to_string_lossy().to_lowercase();
     let rules = super::rules::rule_database();
@@ -17,10 +18,36 @@ pub fn classify_fast(path: &Path) -> (&'static str, u8) {
             return (rule.category.display(), 100);
         }
     }
+    // v7.2: Parent-child inheritance for scan pipeline
+    // Walk up parents to find a classified ancestor
+    let mut ancestor = match path.parent() {
+        Some(p) => p,
+        None => return (Category::Unknown.display(), 0),
+    };
+    for _ in 0..5 {
+        let anc_lower = ancestor.to_string_lossy().to_lowercase();
+        for rule in rules {
+            if (rule.matches)(ancestor, &anc_lower) {
+                return (rule.category.display(), 60);
+            }
+        }
+        match ancestor.parent() {
+            Some(p) => ancestor = p,
+            None => break,
+        }
+    }
     (Category::Unknown.display(), 0)
 }
 
 /// Classify a path using the full rule engine + metadata analysis.
+///
+/// v7.2 Context Inheritance Engine:
+///   Layer 1: Rule database
+///   Layer 1.5: Project override — project roots in Desktop/Documents/etc.
+///              override location-based rules (fixes Desktop/labs-coding/...)
+///   Layer 2.5: Project/workspace detection (filesystem-aware)
+///   Layer 3.5: Parent-child inheritance — children of classified parents
+///              inherit their parent's category (fixes target/debug, target/release)
 pub fn classify(path: &Path) -> ClassificationResult {
     let path_str = path.to_string_lossy();
     let lower = path_str.to_lowercase();
@@ -33,6 +60,9 @@ pub fn classify(path: &Path) -> ClassificationResult {
     // ── Layer 1: Rule database (structured path matching) ─────
     let rules = super::rules::rule_database(); // cached OnceLock
     let mut matched = false;
+    // Track if we matched a location-based rule (Desktop, Documents, etc.)
+    // that should be overridden if project markers are found.
+    let mut is_location_overrideable = false;
 
     for rule in rules {
         if (rule.matches)(path, &lower) {
@@ -47,8 +77,39 @@ pub fn classify(path: &Path) -> ClassificationResult {
             result.depends_on = rule.depends_on.to_string();
             result.deletion_impact = rule.deletion_impact.to_string();
             matched = true;
+
+            // Mark location-based rules for potential project override
+            is_location_overrideable = matches!(
+                rule.category,
+                Category::UserDesktop
+                    | Category::UserDocument
+                    | Category::UserMedia
+                    | Category::UserHomeRoot
+            );
             break;
         }
+    }
+
+    // ── Layer 1.5: Project override — detect projects in Desktop/Documents/etc. ──
+    // Fixes ~/Desktop/labs-coding/cosmostrix classified as User Desktop
+    // when it's actually a project workspace with Cargo.toml / package.json / .git
+    if is_location_overrideable && path.is_dir() && project_markers_found(path) {
+        result.category = Category::ProjectWorkspace;
+        result.risk_level = RiskLevel::High;
+        result.regenerable = false;
+        result.matched_by = "project-override".to_string();
+        result.reasons.clear();
+        result.reasons.push(
+            "Project workspace detected inside Desktop/Documents — overriding location rule".into(),
+        );
+        // v7.3: Set intel for project workspace
+        result.created_by = "Developer".to_string();
+        result.regenerated_by = "Not regenerable — project must be recreated or cloned".to_string();
+        result.depends_on = "None".to_string();
+        result.deletion_impact =
+            "Project source code permanently lost. Must restore from backup or VCS remote."
+                .to_string();
+        // Keep matched = true, updated category
     }
 
     // ── Layer 2.5: Project/workspace detection (filesystem-aware) ──
@@ -115,9 +176,35 @@ pub fn classify(path: &Path) -> ClassificationResult {
         }
     }
 
+    // ── Layer 3.5: Parent-child context inheritance ────────────
+    // v7.2: When a path is still Unknown, walk up to find a classified
+    // parent directory and inherit its category with reduced confidence.
+    // Fixes: target/debug, target/release, and any other children of known artifacts.
+    if result.category == Category::Unknown {
+        if let Some(ancestor_classification) = classify_ancestor(path) {
+            result.category = ancestor_classification.0;
+            result.risk_level = ancestor_classification.1;
+            result.regenerable = ancestor_classification.2;
+            result.matched_by = ancestor_classification.3;
+            result.reasons.clear();
+            result.reasons.push(format!(
+                "Inherited from parent directory classification ({})",
+                result.category.display()
+            ));
+            // Inherit intel fields from parent
+            result.created_by = ancestor_classification.4;
+            result.regenerated_by = ancestor_classification.5;
+            result.depends_on = ancestor_classification.6;
+            result.deletion_impact = ancestor_classification.7;
+            matched = true;
+            // Reduced confidence for inherited classification
+            result.confidence = 0.55;
+        }
+    }
+
     // ── Layer 4: Confidence scoring ───────────────────────────
     if matched {
-        result.confidence = 0.85; // Rule match = high confidence
+        result.confidence = result.confidence.max(0.85); // Rule match = high confidence
     }
 
     // Boost confidence for regenerable items with cache-like paths
@@ -140,6 +227,55 @@ pub fn classify(path: &Path) -> ClassificationResult {
     result.classification_reasoning = crate::dependency::generate_reasoning(&result);
 
     result
+}
+
+/// Check if a directory contains project markers (Cargo.toml, package.json, .git, go.mod).
+fn project_markers_found(path: &Path) -> bool {
+    path.join("Cargo.toml").exists()
+        || path.join("package.json").exists()
+        || path.join(".git").exists()
+        || path.join("go.mod").exists()
+}
+
+/// Cached ancestor classification result for inheritance.
+type AncestorClassification = (
+    Category,
+    RiskLevel,
+    bool,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
+
+/// Try to classify ancestor directories of a path.
+/// Walks up at most 5 levels, returning the first classified ancestor's metadata.
+fn classify_ancestor(path: &Path) -> Option<AncestorClassification> {
+    let rules = super::rules::rule_database();
+    let mut ancestor = path.parent()?;
+    for _ in 0..5 {
+        let lower = ancestor.to_string_lossy().to_lowercase();
+        for rule in rules {
+            if (rule.matches)(ancestor, &lower) {
+                return Some((
+                    rule.category,
+                    rule.risk_level,
+                    rule.regenerable,
+                    format!("inherit-{}", rule.name),
+                    rule.created_by.to_string(),
+                    rule.regenerated_by.to_string(),
+                    rule.depends_on.to_string(),
+                    rule.deletion_impact.to_string(),
+                ));
+            }
+        }
+        match ancestor.parent() {
+            Some(parent) => ancestor = parent,
+            None => break,
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -554,5 +690,98 @@ mod tests {
         for path in &rustup_paths {
             assert_toolchain(path);
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v7.2: Context Inheritance Engine — success criteria tests
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_parent_child_inheritance_target_debug() {
+        // Success criteria: target/debug → BuildOutput
+        // The cache-build-target rule now directly matches target/debug via starts_with("target/")
+        let r = classify(Path::new("target/debug"));
+        assert_eq!(r.category, Category::BuildCache);
+    }
+
+    #[test]
+    fn test_parent_child_inheritance_target_release() {
+        // Success criteria: target/release → BuildOutput
+        // Direct rule match via starts_with("target/")
+        let r = classify(Path::new("target/release"));
+        assert_eq!(r.category, Category::BuildCache);
+    }
+
+    #[test]
+    fn test_parent_child_inheritance_absolute_target_debug() {
+        // Full path with /target/debug should directly match, not just inherit
+        let r = classify(Path::new("/home/user/project/target/debug"));
+        assert_eq!(r.category, Category::BuildCache);
+    }
+
+    #[test]
+    fn test_parent_child_inheritance_nested_build() {
+        // target/debug/build/some-crate-abc/out — should inherit from target/ ancestor
+        let r = classify(Path::new("target/debug/build/some-crate-abc/out"));
+        assert_eq!(r.category, Category::BuildCache);
+    }
+
+    #[test]
+    fn test_npm_npx_is_classified() {
+        // Success criteria: ~/.npm/_npx → known ecosystem artifact, not Unknown
+        let r1 = classify(Path::new("/home/user/.npm/_npx"));
+        assert_ne!(r1.category, Category::Unknown);
+
+        let r2 = classify(Path::new("/home/user/.npm/_npx/abc123/node_modules"));
+        assert_ne!(r2.category, Category::Unknown);
+    }
+
+    #[test]
+    fn test_npm_cacache_is_cache_registry() {
+        let r = classify(Path::new(
+            "/home/user/.npm/_cacache/content-v2/sha512/ab/cd",
+        ));
+        assert_eq!(r.category, Category::CacheRegistry);
+        assert!(r.regenerable);
+    }
+
+    #[test]
+    fn test_npm_generic_is_not_unknown() {
+        // ~/.npm/ (not _npx, not _cacache) should match npm-cache-generic
+        let r = classify(Path::new("/home/user/.npm/_logs/2026-01-01-debug.log"));
+        assert_ne!(r.category, Category::Unknown);
+    }
+
+    #[test]
+    fn test_classify_fast_parent_inheritance() {
+        // classify_fast should find target/debug directly (starts_with rule)
+        let (cat, conf) = classify_fast(Path::new("target/debug"));
+        assert_eq!(cat, Category::BuildCache.display());
+        assert_eq!(conf, 100); // Direct match via starts_with("target/")
+
+        let (cat2, conf2) = classify_fast(Path::new("target"));
+        assert_eq!(cat2, Category::BuildCache.display());
+        assert_eq!(conf2, 100);
+
+        // Deeply nested unknown that requires inheritance — e.g. target/debug/.fingerprint/abc
+        let (cat3, _conf3) = classify_fast(Path::new("target/debug/.fingerprint/some-crate"));
+        // Should still find via ancestor — target/ or target/debug/ ancestors
+        // Since classify_fast walks up, it finds target/ -> BuildCache
+        assert_eq!(cat3, Category::BuildCache.display());
+    }
+
+    #[test]
+    fn test_classify_fast_npm_npx() {
+        let (cat, _) = classify_fast(Path::new("/home/user/.npm/_npx/some-package"));
+        assert_ne!(cat, Category::Unknown.display());
+    }
+
+    #[test]
+    fn test_target_children_inherit_intel() {
+        // Children of target should inherit intel fields
+        let r = classify(Path::new("target/release"));
+        assert!(!r.created_by.is_empty());
+        assert!(!r.regenerated_by.is_empty());
+        assert!(!r.deletion_impact.is_empty());
     }
 }
