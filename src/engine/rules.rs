@@ -547,6 +547,7 @@ fn build_rules() -> Vec<Rule> {
                 lower == "target"
                     || lower.ends_with("/target")
                     || lower.starts_with("target/")
+                    || lower.starts_with("./target/")
                     || (lower.contains("/target/")
                         && !lower.starts_with("/usr/")
                         && !lower.starts_with("/var/"))
@@ -647,6 +648,21 @@ fn build_rules() -> Vec<Rule> {
             regenerated_by: "npx <package> (auto-downloads on next use)",
             depends_on: "npm registry (registry.npmjs.org)",
             deletion_impact: "Next npx invocation re-downloads packages from npm registry. No data loss.",
+        },
+        Rule {
+            name: "npm-logs",
+            matches: |_, lower| {
+                lower.contains("/.npm/_logs/")
+                    || lower.ends_with("/.npm/_logs")
+            },
+            category: Category::Cache,
+            risk_level: RiskLevel::Minimal,
+            regenerable: true,
+            reason: "npm debug logs — diagnostic output from npm operations, safe to clean",
+            created_by: "npm (Node.js package manager)",
+            regenerated_by: "Any npm command (logs generated on next npm operation)",
+            depends_on: "npm usage",
+            deletion_impact: "Debug logs removed. No functional impact — new logs created on next npm command.",
         },
         Rule {
             name: "npm-cache-generic",
