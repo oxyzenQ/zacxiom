@@ -222,6 +222,18 @@ fn compute_risk(eng: &ClassificationResult, impact_analysis: &impact::ImpactAnal
         return RiskLevel::Critical;
     }
 
+    // Configuration categories store user-curated settings — deleting loses
+    // customization.  They are never safe to clean, so the minimum risk
+    // must be High (not Moderate) to stay consistent with the safety verdict.
+    if matches!(
+        eng.category,
+        Category::ApplicationConfiguration
+            | Category::ShellConfiguration
+            | Category::EnvironmentFile
+    ) {
+        return RiskLevel::High;
+    }
+
     // Map from impact level to our risk level
     match impact_analysis.level {
         impact::ImpactLevel::Critical => RiskLevel::Critical,
