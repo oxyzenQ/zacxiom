@@ -4,6 +4,7 @@
 //! CLI definitions using clap derive.
 //!
 //! v6.2.0: added `explain` command and `--dry-run` flag.
+//! v8.3.0: added `plan` command — cleanup recommendation engine.
 
 use clap::{Parser, Subcommand};
 
@@ -115,6 +116,16 @@ pub enum Command {
         id: Option<String>,
     },
     Status,
+
+    /// Plan cleanup — what is safe and recommended? (read-only, never deletes)
+    ///
+    /// Usage: zacxiom plan ~/.cache
+    ///        zacxiom plan target
+    ///        zacxiom plan node_modules
+    Plan {
+        /// Path to plan cleanup for
+        path: String,
+    },
 
     /// Analyze unknown files — what dominates the Unknown bucket?
     InspectUnknown {

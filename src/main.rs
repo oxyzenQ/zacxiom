@@ -25,6 +25,7 @@ mod impact;
 mod inspect;
 mod memory;
 mod ownership;
+mod planner;
 mod policy;
 mod procfs;
 mod profiles;
@@ -150,6 +151,15 @@ fn main() {
         Command::CheckUpdate => check_update(),
         Command::Undo { id } => run_undo(id),
         Command::Status => run_status(),
+        Command::Plan { path } => {
+            let target = PathBuf::from(&path);
+            if !target.exists() {
+                eprintln!("No such path: {path}");
+                std::process::exit(1);
+            }
+            let cleanup_plan = planner::plan(&target);
+            println!("{}", planner::render_plan(&cleanup_plan, &target));
+        }
         Command::InspectUnknown {
             paths,
             depth,
