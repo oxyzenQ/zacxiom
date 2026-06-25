@@ -157,6 +157,11 @@ fn main() {
                 eprintln!("No such path: {path}");
                 std::process::exit(1);
             }
+            // v8.3.1: P1 — dangerous path hard block
+            if let Err(blocked) = planner::check_path_blocked(&target) {
+                println!("{}", planner::render_blocked(&blocked));
+                std::process::exit(1);
+            }
             let cleanup_plan = planner::plan(&target);
             println!("{}", planner::render_plan(&cleanup_plan, &target));
         }

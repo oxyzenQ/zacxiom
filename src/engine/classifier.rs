@@ -79,12 +79,14 @@ pub fn classify(path: &Path) -> ClassificationResult {
             matched = true;
 
             // Mark location-based rules for potential project override
+            // v8.3.1: Also mark TemporaryFile — project signals must outrank temp-location.
             is_location_overrideable = matches!(
                 rule.category,
                 Category::UserDesktop
                     | Category::UserDocument
                     | Category::UserMedia
                     | Category::UserHomeRoot
+                    | Category::TemporaryFile
             );
             break;
         }

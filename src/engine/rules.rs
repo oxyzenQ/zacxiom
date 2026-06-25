@@ -495,6 +495,21 @@ fn build_rules() -> Vec<Rule> {
             depends_on: "None",
             deletion_impact: "Environment variables reset. Applications may fail to configure.",
         },
+        // v8.3.1: Explicit ~/.config directory classification.
+        // Must come before config-app (which requires /.config/ with trailing slash)
+        // and before any generic rules that would misclassify it as UserHomeRoot.
+        Rule {
+            name: "config-dir-root",
+            matches: |_, lower| lower.ends_with("/.config") || lower.ends_with("/.config/"),
+            category: Category::ApplicationConfiguration,
+            risk_level: RiskLevel::High,
+            regenerable: false,
+            reason: "Configuration directory — contains application settings and preferences",
+            created_by: "Applications (on first run / settings save)",
+            regenerated_by: "Applications recreate defaults on next launch — customizations lost",
+            depends_on: "Applications",
+            deletion_impact: "All custom settings and preferences lost. Apps reset to factory defaults.",
+        },
         Rule {
             name: "config-app",
             matches: |_, lower| lower.contains("/.config/"),
