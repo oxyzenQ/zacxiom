@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn regression_downloads_project() {
-        // Downloads/some-project → matched by user-downloads → UserDocument → overrideable
+        // Downloads/some-project → matched by user-downloads → UserDocument → overridable
         let r = classify(Path::new("/home/user/Downloads/some-project"));
         assert_ne!(r.category, Category::Unknown);
     }
