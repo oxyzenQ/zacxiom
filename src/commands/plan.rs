@@ -28,9 +28,10 @@ pub fn run_plan(path: String) {
         std::process::exit(1);
     }
     // v8.3.1: P1 — dangerous path hard block
+    // v10: exit 0 — valid safety refusal is a successful operation, not an error
     if let Err(blocked) = planner::check_path_blocked(&target) {
         println!("{}", planner::render_blocked(&blocked));
-        std::process::exit(1);
+        std::process::exit(0);
     }
 
     if target.is_dir() {

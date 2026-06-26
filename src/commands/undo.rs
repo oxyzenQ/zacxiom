@@ -22,8 +22,14 @@ pub fn run_undo(id: Option<String>) {
     match snapshot::Snapshot::load(&snap_id) {
         Ok(snap) => match snap.restore() {
             Ok(n) => println!("Restored {n} files."),
-            Err(e) => eprintln!("Restore error: {e}"),
+            Err(e) => {
+                eprintln!("Restore error: {e}");
+                std::process::exit(1);
+            }
         },
-        Err(e) => eprintln!("Failed to load snapshot: {e}"),
+        Err(e) => {
+            eprintln!("Failed to load snapshot: {e}");
+            std::process::exit(1);
+        }
     }
 }
