@@ -28,8 +28,23 @@ pub fn run_plan(path: String) {
         let ws = workspace::discover_workspace(&target);
 
         if ws.project_count > 1 {
-            // Multi-project workspace — show workspace summary + per-project advisor
+            // Multi-project workspace — show workspace summary + cross-project recs
             println!("{}", workspace::render_workspace_summary(&ws));
+
+            // Cross-project recommendations
+            let recs = workspace::cross_project_recommendations(&ws);
+            if !recs.is_empty() {
+                println!(
+                    "\n{}",
+                    crate::color::section_header("CROSS-PROJECT RECOMMENDATIONS")
+                );
+                for (rec, projects) in &recs {
+                    println!("  {}", rec);
+                    for p in projects {
+                        println!("    - {}", p);
+                    }
+                }
+            }
 
             // Also show advisor for the root (aggregated view)
             let adv = advisor::advise(&target);

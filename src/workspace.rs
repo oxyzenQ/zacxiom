@@ -245,6 +245,36 @@ fn truncate_path(path: &Path, max_len: usize) -> String {
     format!("...{}", &s[s.len().saturating_sub(max_len - 3)..])
 }
 
+/// Generate cross-project cleanup recommendations.
+///
+/// Identifies shared patterns across projects (e.g., multiple projects
+/// with node_modules) and suggests batch cleanup approaches.
+pub fn cross_project_recommendations(summary: &WorkspaceSummary) -> Vec<(String, Vec<String>)> {
+    let mut recs: Vec<(String, Vec<String>)> = Vec::new();
+
+    // Find ecosystems with multiple projects
+    for (eco, (count, reclaim)) in &summary.by_ecosystem {
+        if *count > 1 {
+            let projects: Vec<String> = summary
+                .projects
+                .iter()
+                .filter(|p| {
+                    p.ecosystem.map(|e| e.display().to_string()).as_deref() == Some(eco.as_str())
+                })
+                .map(|p| p.name.clone())
+                .collect();
+
+            let recommendation = format!(
+                "{count} {eco} projects found — consolidated potential reclaim: {}",
+                crate::display::human_size(*reclaim),
+            );
+            recs.push((recommendation, projects));
+        }
+    }
+
+    recs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
