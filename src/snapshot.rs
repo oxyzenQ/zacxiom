@@ -90,6 +90,7 @@ impl Snapshot {
     }
 
     /// Restore files from a snapshot using trash directory.
+    /// Uses copy+remove fallback for cross-filesystem restores.
     pub fn restore(&self) -> Result<usize, String> {
         let mut restored = 0;
         for entry in &self.entries {
@@ -100,7 +101,14 @@ impl Snapshot {
                     if let Some(parent) = target.parent() {
                         fs::create_dir_all(parent).ok();
                     }
-                    fs::rename(&trash_path, &target).ok();
+                    // Try rename first (fast, same filesystem), fall back to copy+remove
+                    if fs::rename(&trash_path, &target).is_err() {
+                        if fs::copy(&trash_path, &target).is_ok() {
+                            let _ = fs::remove_file(&trash_path);
+                        } else {
+                            continue;
+                        }
+                    }
                     restored += 1;
                 }
             }

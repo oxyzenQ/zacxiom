@@ -99,15 +99,10 @@ pub enum Command {
     /// Explain why a file or domain is safe/risky (★★★★★ trust cards)
     ///
     /// Usage: zacxiom explain ~/.cargo
-    ///        zacxiom explain --path ~/.rustup
+    ///        zacxiom explain ~/.rustup
     Explain {
-        /// File path or domain name to explain (positional)
-        #[arg(default_value = "")]
-        target: String,
-
-        /// File path or domain name (named flag)
-        #[arg(short, long)]
-        path: Option<String>,
+        /// File path or domain name to explain
+        path: String,
     },
 
     Undo {

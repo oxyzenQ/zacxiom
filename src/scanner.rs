@@ -37,9 +37,9 @@ pub fn scan(
         }
 
         let walker = if max_depth > 0 {
-            WalkDir::new(root).max_depth(max_depth)
+            WalkDir::new(root).max_depth(max_depth).follow_links(false)
         } else {
-            WalkDir::new(root)
+            WalkDir::new(root).follow_links(false)
         };
 
         for entry in walker.into_iter().filter_map(|e| e.ok()) {

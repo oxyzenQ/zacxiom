@@ -1,11 +1,11 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Zacxiom — Filesystem Intelligence Engine v6.2.0
+//! Zacxiom — Filesystem Intelligence Engine v7.0.0
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.
-//! v6.2.3: Dynamic multithreading + purple accent styling.
+//! v10.0.0: Release hardening — stability, correctness, regression tests.
 #![allow(dead_code)]
 
 mod advisor;
@@ -102,14 +102,12 @@ fn main() {
             json,
         } => commands::run_clean(paths, depth, smart, force, dry_run, verbose, json, &profile),
 
-        Command::Explain { target, path } => {
-            let target_path = path.as_deref().unwrap_or(&target);
-            if target_path.is_empty() {
+        Command::Explain { path } => {
+            if path.is_empty() {
                 eprintln!("Usage: zacxiom explain <path>");
-                eprintln!("       zacxiom explain --path <path>");
                 std::process::exit(1);
             }
-            commands::run_explain(target_path);
+            commands::run_explain(&path);
         }
 
         Command::Undo { id } => commands::run_undo(id),

@@ -71,7 +71,7 @@ impl Decision {
             Decision::Safe => true,
             Decision::LowRisk => smart || force,
             Decision::Moderate => force,
-            Decision::HighRisk => false,  // needs 2nd confirm in v4
+            Decision::HighRisk => force, // v10: --force allows HighRisk after confirmation
             Decision::Protected => false, // never
         }
     }
@@ -180,5 +180,15 @@ mod tests {
         assert!(!Decision::Moderate.is_cleanable(true, false));
         assert!(Decision::Moderate.is_cleanable(false, true));
         assert!(!Decision::Protected.is_cleanable(true, true));
+    }
+
+    #[test]
+    fn test_high_risk_requires_force() {
+        // HighRisk must NOT be cleanable without --force
+        assert!(!Decision::HighRisk.is_cleanable(false, false));
+        assert!(!Decision::HighRisk.is_cleanable(true, false));
+        // HighRisk IS cleanable with --force (after explicit confirmation)
+        assert!(Decision::HighRisk.is_cleanable(false, true));
+        assert!(Decision::HighRisk.is_cleanable(true, true));
     }
 }

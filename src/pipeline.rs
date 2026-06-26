@@ -391,16 +391,84 @@ pub fn contributor_name(path: &str) -> String {
         return "Package Manager".into();
     }
 
-    // Fallback: extract app name from path
-    path.split('/')
-        .find(|p| p.contains(".cache") || p.contains(".config") || p.contains(".local"))
-        .map(|s| {
-            let parts: Vec<&str> = s.split('/').collect();
-            if parts.len() >= 2 {
-                parts[parts.len() - 1].to_string()
-            } else {
-                s.to_string()
+    // Fallback: extract app name from the segment AFTER .cache/.config/.local
+    let segments: Vec<&str> = path.split('/').collect();
+    for i in 0..segments.len().saturating_sub(1) {
+        let seg = segments[i].to_lowercase();
+        if (seg == ".cache" || seg == ".config" || seg == ".local") && i + 1 < segments.len() {
+            let name = segments[i + 1];
+            if !name.is_empty() && !name.starts_with('.') {
+                let capitalized = {
+                    let mut chars = name.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                    }
+                };
+                return capitalized;
             }
-        })
-        .unwrap_or_else(|| "Other".into())
+        }
+    }
+    "Other".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_contributor_name_known_browsers() {
+        assert_eq!(
+            contributor_name("/home/user/.cache/mozilla/firefox/x"),
+            "Firefox"
+        );
+        assert_eq!(
+            contributor_name("/home/user/.cache/chromium/Default/Cache"),
+            "Chromium"
+        );
+        assert_eq!(
+            contributor_name("/home/user/.cache/google-chrome/"),
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn test_contributor_name_developer_tools() {
+        assert_eq!(
+            contributor_name("/home/user/.cargo/registry/cache/x"),
+            "Cargo (Rust)"
+        );
+        assert_eq!(
+            contributor_name("/home/user/.rustup/toolchains/stable"),
+            "Rustup"
+        );
+        assert_eq!(contributor_name("/home/user/.npm/_cacache/x"), "npm");
+    }
+
+    #[test]
+    fn test_contributor_name_fallback_extracts_app() {
+        // Fallback should return the directory name AFTER .cache/.config/.local
+        // Use app names that do NOT match any explicit checks above
+        assert_eq!(
+            contributor_name("/home/user/.cache/ghostty/cache-data"),
+            "Ghostty"
+        );
+        assert_eq!(
+            contributor_name("/home/user/.config/wezterm/prefs"),
+            "Wezterm"
+        );
+    }
+
+    #[test]
+    fn test_contributor_name_fallback_other_when_no_match() {
+        assert_eq!(contributor_name("/opt/something/weird/path"), "Other");
+    }
+
+    #[test]
+    fn test_contributor_name_fallback_skips_dot_dirs() {
+        assert_eq!(
+            contributor_name("/home/user/.cache/.hidden/app/data"),
+            "Other"
+        );
+    }
 }

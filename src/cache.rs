@@ -78,7 +78,6 @@ pub fn classify(path: &Path) -> CacheDomain {
         || path_str.ends_with("package-lock.json")
         || path_str.ends_with("go.mod")
         || path_str.ends_with("go.sum")
-        || path_str.ends_with(".sh")
     {
         return CacheDomain::BuildArtifact;
     }
@@ -404,5 +403,27 @@ mod tests {
             )),
             CacheDomain::Developer
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v10.0.0 regression: .sh files are NOT build artifacts
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_shell_script_not_build_artifact() {
+        // Shell scripts are project assets or config, NOT regenerable build output
+        let result = classify(Path::new("/home/user/project/scripts/deploy.sh"));
+        assert_ne!(result, CacheDomain::BuildArtifact);
+    }
+
+    #[test]
+    fn test_rust_toolchain_shell_script_not_build_artifact() {
+        // Rustup toolchain shell scripts should still match Developer (via .rustup path)
+        // The .sh extension should no longer override classification
+        let result = classify(Path::new(
+            "/home/user/.rustup/toolchains/stable-x86_64/bin/rust-gdb",
+        ));
+        // Should still be Developer because .rustup prefix matches first
+        assert_eq!(result, CacheDomain::Developer);
     }
 }
