@@ -305,31 +305,31 @@ fn build_ecosystem_recommendation(
     if is_project_root && !eng.category.is_cleanable() {
         return match ecosystem {
             Some(Ecosystem::Rust) => (
-                "Review build artifacts instead.".into(),
+                "Clean generated artifacts instead.".into(),
                 "Project root contains non-regenerable source code.".into(),
                 String::new(),
                 vec!["cargo clean".into()],
             ),
             Some(Ecosystem::Node) => (
-                "Review dependencies instead.".into(),
+                "Clean dependency installations instead.".into(),
                 "Project root contains non-regenerable source code.".into(),
                 String::new(),
                 vec!["npm install".into()],
             ),
             Some(Ecosystem::Python) => (
-                "Review virtual environment and cache instead.".into(),
+                "Clean virtual environment and cache instead.".into(),
                 "Project root contains non-regenerable source code.".into(),
                 String::new(),
                 vec!["python -m venv .venv".into()],
             ),
             Some(Ecosystem::Go) => (
-                "Review build cache instead.".into(),
+                "Clean build cache instead.".into(),
                 "Project root contains non-regenerable source code.".into(),
                 String::new(),
                 vec!["go clean -cache".into()],
             ),
             None => (
-                "Review cleanable subdirectories instead.".into(),
+                "Clean safe subdirectories instead.".into(),
                 "This directory contains non-regenerable content.".into(),
                 String::new(),
                 Vec::new(),
@@ -526,6 +526,33 @@ fn build_ecosystem_recommendation(
         );
     }
 
+    // ── Unsafe: security credentials (SSH, GPG, etc.) ──
+    if eng.category == Category::SecurityCredential {
+        let path_str = path.to_string_lossy().to_lowercase();
+        if path_str.contains(".ssh") {
+            return (
+                "Keep SSH credentials.".into(),
+                "Authentication keys cannot be regenerated.".into(),
+                "SSH access continues to work.".into(),
+                Vec::new(),
+            );
+        }
+        if path_str.contains(".gnupg") || path_str.contains("gpg") {
+            return (
+                "Keep encryption keys.".into(),
+                "GPG keys and trust database cannot be regenerated.".into(),
+                "Encrypted communications and signatures continue to work.".into(),
+                Vec::new(),
+            );
+        }
+        return (
+            "Preserve authentication credentials.".into(),
+            "Credentials cannot be recovered once deleted.".into(),
+            "Authentication continues to work.".into(),
+            Vec::new(),
+        );
+    }
+
     // ── Unsafe: system ──
     if matches!(
         eng.category,
@@ -533,7 +560,6 @@ fn build_ecosystem_recommendation(
             | Category::SystemConfiguration
             | Category::SystemData
             | Category::VirtualFilesystem
-            | Category::SecurityCredential
     ) {
         let reason = match eng.category {
             Category::SystemBinary => {
@@ -541,9 +567,6 @@ fn build_ecosystem_recommendation(
             }
             Category::SystemConfiguration => {
                 "System services depend on these configuration files.".into()
-            }
-            Category::SecurityCredential => {
-                "Authentication credentials cannot be recovered once deleted.".into()
             }
             _ => "Operating system infrastructure — required for system stability.".into(),
         };
@@ -562,24 +585,27 @@ fn build_ecosystem_recommendation(
             | Category::ApplicationConfiguration
             | Category::EnvironmentFile
     ) {
-        let reason = match eng.category {
-            Category::ShellConfiguration => {
-                "Custom aliases, functions, and shell settings would be lost.".into()
-            }
-            Category::ApplicationConfiguration => {
-                "Application settings and preferences would reset to defaults.".into()
-            }
-            Category::EnvironmentFile => {
-                "Environment variables and secrets would need to be reconfigured.".into()
-            }
-            _ => "Configuration contains user customizations.".into(),
+        return match eng.category {
+            Category::ShellConfiguration => (
+                "Do not clean this directory.".into(),
+                "Contains aliases, functions, and shell customizations.".into(),
+                "Shell loses all user-defined behavior and prompt settings.".into(),
+                Vec::new(),
+            ),
+            Category::ApplicationConfiguration => (
+                "Do not clean this directory.".into(),
+                "Contains application settings and preferences.".into(),
+                "Application recreates default configuration. User customizations are lost.".into(),
+                Vec::new(),
+            ),
+            Category::EnvironmentFile => (
+                "Do not clean this file.".into(),
+                "Contains environment variables and secrets.".into(),
+                "Application recreates default environment. Secrets and overrides are lost.".into(),
+                Vec::new(),
+            ),
+            _ => unreachable!(),
         };
-        return (
-            "Preserve application settings.".into(),
-            reason,
-            "Must recreate manually".into(),
-            Vec::new(),
-        );
     }
 
     // ── Unsafe: user content ──
@@ -658,7 +684,14 @@ fn build_expected_result(
         return "Preserve system infrastructure.".into();
     }
     if matches!(eng.category, Category::SecurityCredential) {
-        return "Preserve authentication credentials.".into();
+        let path_str = _path.to_string_lossy().to_lowercase();
+        if path_str.contains(".ssh") {
+            return "SSH access continues to work.".into();
+        }
+        if path_str.contains(".gnupg") || path_str.contains("gpg") {
+            return "Encrypted communications and signatures continue to work.".into();
+        }
+        return "Authentication continues to work.".into();
     }
     if matches!(
         eng.category,
@@ -666,7 +699,17 @@ fn build_expected_result(
             | Category::ApplicationConfiguration
             | Category::EnvironmentFile
     ) {
-        return "Preserve application settings.".into();
+        return match eng.category {
+            Category::ShellConfiguration => {
+                "Shell retains all user-defined behavior and prompt settings."
+            }
+            Category::ApplicationConfiguration => {
+                "Applications retain their customized configuration."
+            }
+            Category::EnvironmentFile => "Applications retain their runtime configuration.",
+            _ => "Configuration is preserved.",
+        }
+        .into();
     }
     if eng.category == Category::BuildCache {
         return "Reclaim build artifact storage.".into();
@@ -709,15 +752,22 @@ fn build_notes(
         ));
     }
 
-    // Add ownership context
+    // Add ownership context with evidence
     if let Some(om) = ownership {
         notes.push(format!(
             "Owned by project: {} ({})",
             om.project.name,
             om.project.ecosystem.display()
         ));
-        if om.evidence.confidence >= 80 {
-            notes.push(format!("Ownership confidence: {}%", om.evidence.confidence));
+        notes.push(format!("Ownership confidence: {}%", om.evidence.confidence));
+        if !om.evidence.evidence_files.is_empty() {
+            let evidence_list: Vec<String> = om
+                .evidence
+                .evidence_files
+                .iter()
+                .map(|f| format!("  + {}", f))
+                .collect();
+            notes.push(format!("Evidence:\n{}", evidence_list.join("\n")));
         }
     }
 
@@ -1172,7 +1222,9 @@ mod tests {
         let p = plan(&root);
         assert!(!p.safe_to_clean);
         // P2: Must suggest child cleanup, never root deletion
-        assert!(p.recommendation.contains("Review build artifacts instead"));
+        assert!(p
+            .recommendation
+            .contains("Clean generated artifacts instead"));
         assert!(p
             .suggested_commands
             .iter()
@@ -1262,5 +1314,116 @@ mod tests {
                 eng.category
             );
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // v8.3.2 Polish Tests
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_polish_config_fields_are_distinct() {
+        // P1: ~/.config Recommendation / Reason / Expected Result must differ
+        let home = std::env::var("HOME").unwrap();
+        let configpath = Path::new(&home).join(".config");
+        if configpath.exists() {
+            let p = plan(&configpath);
+            assert_ne!(
+                p.recommendation, p.expected_result,
+                "Recommendation and Expected Result must differ"
+            );
+            assert_ne!(
+                p.recommendation, p.reason,
+                "Recommendation and Reason must differ"
+            );
+            assert_ne!(
+                p.reason, p.expected_result,
+                "Reason and Expected Result must differ"
+            );
+        }
+    }
+
+    #[test]
+    fn test_polish_ssh_specific_wording() {
+        // P2: ~/.ssh must mention SSH, not "system infrastructure"
+        let home = std::env::var("HOME").unwrap();
+        let sshpath = Path::new(&home).join(".ssh");
+        if sshpath.exists() {
+            let p = plan(&sshpath);
+            assert!(
+                p.recommendation.contains("SSH") || p.recommendation.contains("ssh"),
+                "SSH path should mention SSH, got: {}",
+                p.recommendation
+            );
+            assert!(
+                !p.recommendation.contains("system infrastructure"),
+                "SSH path should NOT say 'system infrastructure'"
+            );
+            assert!(
+                p.expected_result.contains("SSH") || p.expected_result.contains("ssh"),
+                "SSH expected result should mention SSH, got: {}",
+                p.expected_result
+            );
+        }
+    }
+
+    #[test]
+    fn test_polish_project_root_action_oriented() {
+        // P3: Project root recommendation should be action-oriented
+        let (_dir, root) = setup_rust_project();
+        let p = plan(&root);
+        assert!(
+            p.recommendation.starts_with("Clean"),
+            "Project root recommendation should start with 'Clean', got: {}",
+            p.recommendation
+        );
+    }
+
+    #[test]
+    fn test_polish_confidence_shows_evidence() {
+        // P4: Ownership note should include evidence files
+        let (_dir, root) = setup_rust_project();
+        let p = plan(&root);
+        let notes_text = p.notes.join("\n");
+        assert!(
+            notes_text.contains("Evidence:"),
+            "Ownership note should show evidence, got: {}",
+            notes_text
+        );
+        assert!(
+            notes_text.contains("Cargo.toml"),
+            "Evidence should list Cargo.toml, got: {}",
+            notes_text
+        );
+    }
+
+    #[test]
+    fn test_polish_config_regeneration_wording() {
+        // P5: Config regeneration should mention application recreation
+        let home = std::env::var("HOME").unwrap();
+        let configpath = Path::new(&home).join(".config");
+        if configpath.exists() {
+            let p = plan(&configpath);
+            assert!(
+                p.regeneration.contains("recreates default"),
+                "Config regeneration should mention 'recreates default', got: {}",
+                p.regeneration
+            );
+            assert!(
+                !p.regeneration.contains("Must recreate manually"),
+                "Config regeneration should NOT say 'Must recreate manually'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_polish_node_project_root_action_oriented() {
+        // P3: Node project root also action-oriented
+        let (_dir, root) = setup_node_project();
+        let p = plan(&root);
+        assert!(
+            p.recommendation.starts_with("Clean"),
+            "Node project root recommendation should start with 'Clean', got: {}",
+            p.recommendation
+        );
     }
 }
