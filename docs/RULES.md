@@ -188,6 +188,9 @@ cargo audit                  # Dependency vulnerabilities (when available)
 > strip = true
 > lto = "thin"
 > codegen-units = 1
+> panic = "unwind"
+> overflow-checks = false
+> incremental = false
 > ```
 
 ## 🔮 RULES EVOLUTION (v2 → v5)
