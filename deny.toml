@@ -1,0 +1,28 @@
+# Zacxiom — cargo-deny configuration
+# Licenses compatible with GPL-3.0-only
+
+[licenses]
+allow = [
+    "GPL-3.0-only",
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Zlib",
+    "OpenSSL",
+]
+# Dual-licensed crates (MIT OR Apache-2.0) are accepted when both are in allow list
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "deny"
+deny = []
+skip = []
+skip-tree = []
+
+[advisories]
+ignore = []
