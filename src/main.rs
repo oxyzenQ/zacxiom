@@ -15,6 +15,7 @@ mod cli;
 mod color;
 mod commands;
 mod confidence;
+mod decision;
 mod dependency;
 mod discovery;
 mod display;
