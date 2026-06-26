@@ -110,7 +110,6 @@ pub enum Command {
         path: Option<String>,
     },
 
-    CheckUpdate,
     Undo {
         #[arg(short, long)]
         id: Option<String>,

@@ -149,7 +149,6 @@ fn main() {
             run_explain(target_path);
         }
 
-        Command::CheckUpdate => check_update(),
         Command::Undo { id } => run_undo(id),
         Command::Status => run_status(),
         Command::Plan { path } => {
