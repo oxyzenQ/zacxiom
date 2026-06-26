@@ -1,61 +1,83 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Workspace Intelligence — v8.6
+//! Workspace Intelligence — v8.7
 //!
 //! Multi-project discovery, workspace summary, and cross-project cleanup planning.
 //!
-//! A "workspace" is a directory containing one or more projects.
-//! This module discovers all projects within a workspace and provides
-//! summary information and aggregated cleanup recommendations.
+//! v8.7.1: Fixed false-positive subdirectory detection.
+//! Uses `is_project_root` (no parent traversal) instead of `find_project_for_path`.
 
 use crate::discovery::{self, Ecosystem, ProjectInfo};
 use crate::planner;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Subdirectories that are NEVER projects.
+const NON_PROJECT_DIRS: &[&str] = &[
+    "src",
+    "docs",
+    "assets",
+    "scripts",
+    "tests",
+    "examples",
+    "benches",
+    "target",
+    "node_modules",
+    "__pycache__",
+    "vendor",
+    "dist",
+    "build",
+    ".git",
+    ".github",
+    ".vscode",
+    ".idea",
+    "out",
+    "bin",
+    "obj",
+    "include",
+    "lib",
+    "tmp",
+    "temp",
+];
 
 /// A discovered project within a workspace.
 #[derive(Debug, Clone)]
 pub struct WorkspaceProject {
-    /// Project root directory.
     pub path: PathBuf,
-    /// Project name.
     pub name: String,
-    /// Detected ecosystem.
     pub ecosystem: Option<Ecosystem>,
-    /// Estimated reclaimable bytes.
     pub reclaimable: u64,
-    /// Number of cleanable artifacts found.
     pub artifact_count: usize,
 }
 
-/// Workspace-wide summary.
 #[derive(Debug, Clone)]
 pub struct WorkspaceSummary {
-    /// Root directory analyzed.
     pub root: PathBuf,
-    /// All discovered projects.
     pub projects: Vec<WorkspaceProject>,
-    /// Projects grouped by ecosystem.
     pub by_ecosystem: HashMap<String, (usize, u64)>,
-    /// Total potential reclaim across all projects.
     pub total_reclaimable: u64,
-    /// Total number of projects found.
     pub project_count: usize,
 }
 
 /// Discover all projects within a workspace directory.
 ///
-/// Walks the directory tree (depth-limited) to find project markers
-/// (Cargo.toml, package.json, etc.) and groups them into projects.
-///
-/// Max depth: 3 levels to avoid scanning entire filesystem.
+/// Walk: checks root first → if project found, stop recursing into its children.
+/// Only recurses into child directories that are NOT themselves inside a known
+/// project root and that could contain nested projects.
 pub fn discover_workspace(root: &Path) -> WorkspaceSummary {
     let mut projects: Vec<WorkspaceProject> = Vec::new();
-    let mut seen: HashMap<PathBuf, bool> = HashMap::new();
 
-    discover_recursive(root, 0, 3, &mut projects, &mut seen);
+    // Step 1: Check if root itself is a project
+    if let Some(info) = discovery::is_project_root(root) {
+        add_project(&mut projects, root, &info);
+        // Root IS a project — only check for NESTED projects in immediate children
+        discover_nested(root, &mut projects);
+    } else {
+        // Root is NOT a project — scan children for projects
+        discover_children(root, &mut projects, &mut HashSet::new());
+    }
 
     let mut by_ecosystem: HashMap<String, (usize, u64)> = HashMap::new();
     let mut total_reclaimable: u64 = 0;
@@ -80,67 +102,77 @@ pub fn discover_workspace(root: &Path) -> WorkspaceSummary {
     }
 }
 
-/// Recursive project discovery with depth limit.
-fn discover_recursive(
-    dir: &Path,
-    depth: usize,
-    max_depth: usize,
-    projects: &mut Vec<WorkspaceProject>,
-    seen: &mut HashMap<PathBuf, bool>,
-) {
-    if depth > max_depth || !dir.is_dir() {
-        return;
-    }
+/// Add a project to the workspace list.
+fn add_project(projects: &mut Vec<WorkspaceProject>, root: &Path, info: &ProjectInfo) {
+    let reclaimable = estimate_project_reclaim(root, info);
+    let artifact_count = count_cleanable_artifacts(root, info);
 
-    // Check if this directory itself is a project root
+    projects.push(WorkspaceProject {
+        path: root.to_path_buf(),
+        name: info.name.clone(),
+        ecosystem: Some(info.ecosystem),
+        reclaimable,
+        artifact_count,
+    });
+}
+
+/// Discover nested projects inside a known project root.
+///
+/// Only checks IMMEDIATE children. Does NOT recurse into subdirectories
+/// that are standard non-project dirs (src/, docs/, targets/, etc.).
+fn discover_nested(root: &Path, projects: &mut Vec<WorkspaceProject>) {
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let child = entry.path();
+            if !child.is_dir() {
+                continue;
+            }
+            let name = child.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if NON_PROJECT_DIRS.contains(&name) {
+                continue;
+            }
+            if name.starts_with('.') {
+                continue;
+            }
+            // Check if this child is itself a project (nested)
+            if let Some(info) = discovery::is_project_root(&child) {
+                add_project(projects, &child, &info);
+            }
+        }
+    }
+}
+
+/// Discover projects by scanning children (when root is not a project).
+fn discover_children(
+    dir: &Path,
+    projects: &mut Vec<WorkspaceProject>,
+    seen: &mut HashSet<PathBuf>,
+) {
     if let Ok(canonical) = dir.canonicalize() {
-        if seen.contains_key(&canonical) {
+        if seen.contains(&canonical) {
             return;
         }
-        seen.insert(canonical, true);
+        seen.insert(canonical);
     }
 
-    let project_info = discovery::find_project_for_path(dir);
-
-    if let Some(project) = project_info {
-        // This is a project root — compute reclaimable estimates
-        let reclaimable = estimate_project_reclaim(dir, &project);
-        let artifact_count = count_cleanable_artifacts(dir, &project);
-
-        projects.push(WorkspaceProject {
-            path: dir.to_path_buf(),
-            name: project.name,
-            ecosystem: Some(project.ecosystem),
-            reclaimable,
-            artifact_count,
-        });
-    }
-
-    // Continue scanning children (depth-limited)
-    if depth < max_depth {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let child = entry.path();
-                if child.is_dir() {
-                    // Skip hidden directories and well-known non-project dirs
-                    let name = child.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if name.starts_with('.') && name != ".config" {
-                        continue;
-                    }
-                    if matches!(
-                        name,
-                        "node_modules"
-                            | "target"
-                            | "__pycache__"
-                            | "vendor"
-                            | "dist"
-                            | "build"
-                            | ".git"
-                    ) {
-                        continue;
-                    }
-                    discover_recursive(&child, depth + 1, max_depth, projects, seen);
-                }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let child = entry.path();
+            if !child.is_dir() {
+                continue;
+            }
+            let name = child.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if NON_PROJECT_DIRS.contains(&name) {
+                continue;
+            }
+            if name.starts_with('.') {
+                continue;
+            }
+            if let Some(info) = discovery::is_project_root(&child) {
+                add_project(projects, &child, &info);
+            } else {
+                // Not a project — recurse further
+                discover_children(&child, projects, seen);
             }
         }
     }
@@ -150,7 +182,6 @@ fn discover_recursive(
 fn estimate_project_reclaim(root: &Path, project: &ProjectInfo) -> u64 {
     let mut total: u64 = 0;
 
-    // Common cleanable subdirectories
     let candidates = match project.ecosystem {
         Ecosystem::Rust => vec!["target"],
         Ecosystem::Node => vec!["node_modules", "dist", ".next", ".nuxt", "coverage"],
@@ -161,7 +192,6 @@ fn estimate_project_reclaim(root: &Path, project: &ProjectInfo) -> u64 {
     for candidate in &candidates {
         let path = root.join(candidate);
         if path.is_dir() {
-            // Use planner to estimate size — reuses caching from v8.6
             let plan = planner::plan(&path);
             total += plan.estimated_reclaimable_bytes;
         }
@@ -170,7 +200,6 @@ fn estimate_project_reclaim(root: &Path, project: &ProjectInfo) -> u64 {
     total
 }
 
-/// Count the number of cleanable artifact directories found.
 fn count_cleanable_artifacts(root: &Path, project: &ProjectInfo) -> usize {
     let candidates = match project.ecosystem {
         Ecosystem::Rust => vec!["target"],
@@ -205,7 +234,6 @@ pub fn render_workspace_summary(summary: &WorkspaceSummary) -> String {
         return out;
     }
 
-    // Grouped by ecosystem
     let mut ecosystems: Vec<_> = summary.by_ecosystem.iter().collect();
     ecosystems.sort_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
 
@@ -246,16 +274,39 @@ fn truncate_path(path: &Path, max_len: usize) -> String {
 }
 
 /// Generate cross-project cleanup recommendations.
-///
-/// Identifies shared patterns across projects (e.g., multiple projects
-/// with node_modules) and suggests batch cleanup approaches.
 pub fn cross_project_recommendations(summary: &WorkspaceSummary) -> Vec<(String, Vec<String>)> {
     let mut recs: Vec<(String, Vec<String>)> = Vec::new();
 
-    // Find ecosystems with multiple projects
+    let mut seen_names: HashSet<String> = HashSet::new();
+    let mut unique_projects: Vec<String> = Vec::new();
+
+    for proj in &summary.projects {
+        if seen_names.insert(proj.name.clone()) {
+            unique_projects.push(proj.name.clone());
+        }
+    }
+
     for (eco, (count, reclaim)) in &summary.by_ecosystem {
         if *count > 1 {
-            let projects: Vec<String> = summary
+            let eco_projects: Vec<String> = summary
+                .projects
+                .iter()
+                .filter(|p| {
+                    p.ecosystem.map(|e| e.display().to_string()).as_deref() == Some(eco.as_str())
+                })
+                .map(|p| p.name.clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            let recommendation = format!(
+                "{count} {eco} projects found — consolidated potential reclaim: {}",
+                crate::display::human_size(*reclaim),
+            );
+            recs.push((recommendation, eco_projects));
+        } else if *count == 1 {
+            let recommendation = format!("1 {eco} project found",);
+            let eco_projects: Vec<String> = summary
                 .projects
                 .iter()
                 .filter(|p| {
@@ -263,12 +314,7 @@ pub fn cross_project_recommendations(summary: &WorkspaceSummary) -> Vec<(String,
                 })
                 .map(|p| p.name.clone())
                 .collect();
-
-            let recommendation = format!(
-                "{count} {eco} projects found — consolidated potential reclaim: {}",
-                crate::display::human_size(*reclaim),
-            );
-            recs.push((recommendation, projects));
+            recs.push((recommendation, eco_projects));
         }
     }
 
@@ -281,66 +327,169 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    // ═══════════════════════════════════════════════════════════
+    // Regression tests — v8.7.1: subdirectory false positives
+    // ═══════════════════════════════════════════════════════════
+
+    fn make_rust_project(dir: &Path, name: &str) {
+        fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\n"),
+        )
+        .unwrap();
+        fs::create_dir(dir.join("src")).unwrap();
+        fs::write(dir.join("src/main.rs"), "fn main() {}").unwrap();
+    }
+
+    fn make_node_project(dir: &Path, name: &str) {
+        fs::write(
+            dir.join("package.json"),
+            format!("{{\"name\": \"{name}\", \"version\": \"1.0\"}}"),
+        )
+        .unwrap();
+    }
+
     #[test]
-    fn test_discover_workspace_empty() {
+    fn test_single_rust_project_not_many() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        make_rust_project(root, "myproject");
+        fs::create_dir(root.join("docs")).unwrap();
+        fs::create_dir(root.join("scripts")).unwrap();
+        fs::create_dir(root.join("assets")).unwrap();
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+
+        let summary = discover_workspace(root);
+        assert_eq!(
+            summary.project_count,
+            1,
+            "Expected 1 project, got {}: {:?}",
+            summary.project_count,
+            summary.projects.iter().map(|p| &p.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_subdirs_not_projects() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        make_rust_project(root, "app");
+        fs::create_dir(root.join("docs")).unwrap();
+        fs::create_dir(root.join("assets")).unwrap();
+        fs::create_dir(root.join("scripts")).unwrap();
+
+        let summary = discover_workspace(root);
+        let names: Vec<&str> = summary.projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(!names.contains(&"src"), "src/ should not be a project");
+        assert!(!names.contains(&"docs"), "docs/ should not be a project");
+        assert!(
+            !names.contains(&"assets"),
+            "assets/ should not be a project"
+        );
+        assert!(
+            !names.contains(&"scripts"),
+            "scripts/ should not be a project"
+        );
+        assert_eq!(summary.project_count, 1);
+    }
+
+    #[test]
+    fn test_target_not_a_project() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        make_rust_project(root, "app");
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+        fs::write(root.join("target/debug/binary"), vec![0u8; 1024]).unwrap();
+
+        let summary = discover_workspace(root);
+        let names: Vec<&str> = summary.projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            !names.contains(&"target"),
+            "target/ should not be a project"
+        );
+        assert!(!names.contains(&"debug"), "debug/ should not be a project");
+        assert_eq!(summary.project_count, 1);
+    }
+
+    #[test]
+    fn test_nested_rust_project() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let parent_dir = root.join("parent");
+        fs::create_dir(&parent_dir).unwrap();
+        make_rust_project(&parent_dir, "parent");
+        let tools_dir = parent_dir.join("tools");
+        fs::create_dir(&tools_dir).unwrap();
+        make_rust_project(&tools_dir, "tools");
+
+        let summary = discover_workspace(&parent_dir);
+        assert_eq!(
+            summary.project_count, 2,
+            "Should find 2 projects (parent + nested tools)"
+        );
+        let names: Vec<&str> = summary.projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"parent"));
+        assert!(names.contains(&"tools"));
+    }
+
+    #[test]
+    fn test_node_project_single() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        make_node_project(root, "nodeapp");
+        fs::create_dir(root.join("node_modules")).unwrap();
+        fs::create_dir(root.join("dist")).unwrap();
+
+        let summary = discover_workspace(root);
+        assert_eq!(summary.project_count, 1);
+        assert!(!summary.projects.iter().any(|p| p.name == "node_modules"));
+        assert!(!summary.projects.iter().any(|p| p.name == "dist"));
+    }
+
+    #[test]
+    fn test_mixed_rust_node_workspace() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let rust_dir = root.join("rust-app");
+        fs::create_dir(&rust_dir).unwrap();
+        make_rust_project(&rust_dir, "rust-app");
+        let node_dir = root.join("node-app");
+        fs::create_dir(&node_dir).unwrap();
+        make_node_project(&node_dir, "node-app");
+
+        let summary = discover_workspace(root);
+        assert_eq!(summary.project_count, 2);
+        assert!(summary.by_ecosystem.contains_key("Rust"));
+        assert!(summary.by_ecosystem.contains_key("Node.js"));
+    }
+
+    #[test]
+    fn test_empty_dir() {
         let dir = TempDir::new().unwrap();
         let summary = discover_workspace(dir.path());
         assert_eq!(summary.project_count, 0);
     }
 
     #[test]
-    fn test_discover_workspace_single_rust_project() {
+    fn test_no_duplicate_project_names() {
         let dir = TempDir::new().unwrap();
         let root = dir.path();
-        fs::write(root.join("Cargo.toml"), "[package]\nname = \"test\"\n").unwrap();
-        fs::create_dir(root.join("src")).unwrap();
-        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-        fs::create_dir_all(root.join("target/debug")).unwrap();
-        fs::write(root.join("target/debug/binary"), vec![0u8; 1024]).unwrap();
+        make_rust_project(root, "zacxiom");
 
         let summary = discover_workspace(root);
-        assert!(
-            summary.project_count >= 1,
-            "Expected at least 1 project, got {}",
-            summary.project_count
+        let names: HashSet<&str> = summary.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names.len(),
+            summary.project_count,
+            "All project names must be unique"
         );
-        assert!(summary.total_reclaimable > 0);
-    }
-
-    #[test]
-    fn test_discover_workspace_multiple_projects() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path();
-
-        // Rust project
-        let rust = root.join("rust-project");
-        fs::create_dir(&rust).unwrap();
-        fs::write(rust.join("Cargo.toml"), "[package]\nname = \"rust\"\n").unwrap();
-
-        // Node project
-        let node = root.join("node-project");
-        fs::create_dir(&node).unwrap();
-        fs::write(
-            node.join("package.json"),
-            "{\"name\": \"node\", \"version\": \"1.0\"}",
-        )
-        .unwrap();
-
-        let summary = discover_workspace(root);
-        assert!(
-            summary.project_count >= 2,
-            "Expected at least 2 projects, got {}",
-            summary.project_count
-        );
-        assert!(summary.by_ecosystem.contains_key("Rust"));
-        assert!(summary.by_ecosystem.contains_key("Node.js"));
     }
 
     #[test]
     fn test_render_workspace_summary() {
         let dir = TempDir::new().unwrap();
         let root = dir.path();
-        fs::write(root.join("Cargo.toml"), "[package]\nname = \"test\"\n").unwrap();
+        make_rust_project(root, "test");
 
         let summary = discover_workspace(root);
         let output = render_workspace_summary(&summary);

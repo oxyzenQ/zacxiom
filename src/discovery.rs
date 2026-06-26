@@ -102,6 +102,56 @@ impl ProjectInfo {
     }
 }
 
+/// Check if a directory itself is a project root (no parent traversal).
+///
+/// Unlike `find_project_for_path` (which walks UP to find containing projects),
+/// this function ONLY checks the given directory for ecosystem markers.
+/// Used by workspace discovery to avoid false positives on subdirectories.
+pub fn is_project_root(path: &Path) -> Option<ProjectInfo> {
+    if !path.is_dir() {
+        return None;
+    }
+
+    let resolved = if path.is_relative() {
+        std::env::current_dir().ok()?.join(path)
+    } else {
+        path.to_path_buf()
+    };
+
+    if let Ok(entries) = fs::read_dir(&resolved) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if let Some(ecosystem) = Ecosystem::from_manifest(&name_str) {
+                let mut manifests = Vec::new();
+                for mf in ecosystem.manifest_files() {
+                    let mf_path = resolved.join(mf);
+                    if mf_path.exists() {
+                        manifests.push(mf_path);
+                    }
+                }
+                if manifests.iter().any(|p| {
+                    p.file_name().and_then(|n| n.to_str()) == Some(ecosystem.primary_manifest())
+                }) {
+                    let project_name = resolved
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    return Some(ProjectInfo {
+                        name: project_name,
+                        root: resolved,
+                        ecosystem,
+                        manifests,
+                    });
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Discovery cache stored on disk.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct DiscoveryCache {
