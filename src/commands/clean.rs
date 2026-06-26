@@ -37,6 +37,38 @@ pub fn run_clean(
     prog.done();
 
     if dry_run {
+        // v10: JSON output support for dry-run
+        if json {
+            let cleanable: Vec<_> = classified
+                .iter()
+                .filter(|f| f.decision.is_cleanable(smart, force))
+                .collect();
+            let skipped: Vec<_> = classified
+                .iter()
+                .filter(|f| !f.decision.is_cleanable(smart, force))
+                .collect();
+            let mode = if force {
+                "force"
+            } else if smart {
+                "smart"
+            } else {
+                "safe"
+            };
+            let out = serde_json::json!({
+                "mode": mode,
+                "total_cleanable": cleanable.len(),
+                "total_cleanable_size": cleanable.iter().map(|f| f.size).sum::<u64>(),
+                "total_skipped": skipped.len(),
+                "total_skipped_size": skipped.iter().map(|f| f.size).sum::<u64>(),
+                "files": cleanable.iter().map(|f| serde_json::json!({
+                    "path": f.path,
+                    "size": f.size,
+                    "decision": format!("{:?}", f.decision),
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            return;
+        }
         // v6.2.2: clean summary, no box art
         let cleanable: Vec<_> = classified
             .iter()
