@@ -19,6 +19,7 @@ mod dependency;
 mod discovery;
 mod display;
 mod domain;
+mod ecosystem;
 mod engine;
 mod errors;
 mod execution_order;
