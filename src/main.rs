@@ -8,6 +8,7 @@
 //! v6.2.3: Dynamic multithreading + purple accent styling.
 #![allow(dead_code)]
 
+mod advisor;
 mod cache;
 mod cleaner;
 mod cli;
@@ -162,8 +163,20 @@ fn main() {
                 println!("{}", planner::render_blocked(&blocked));
                 std::process::exit(1);
             }
-            let cleanup_plan = planner::plan(&target);
-            println!("{}", planner::render_plan(&cleanup_plan, &target));
+            // v8.4: Cleanup Advisor for directories
+            if target.is_dir() {
+                let adv = advisor::advise(&target);
+                if !adv.opportunities.is_empty() {
+                    println!("{}", advisor::render_advisor(&adv, &target));
+                } else {
+                    // No opportunities found — fall back to single-path planner
+                    let cleanup_plan = planner::plan(&target);
+                    println!("{}", planner::render_plan(&cleanup_plan, &target));
+                }
+            } else {
+                let cleanup_plan = planner::plan(&target);
+                println!("{}", planner::render_plan(&cleanup_plan, &target));
+            }
         }
         Command::InspectUnknown {
             paths,
