@@ -237,7 +237,6 @@ pub struct InsightContext {
     pub high_risk: usize,
     pub protected: usize,
     pub total_size: u64,
-    pub open_files: usize,
 }
 
 pub fn render_insights(ctx: &InsightContext) -> String {
@@ -259,10 +258,6 @@ pub fn render_insights(ctx: &InsightContext) -> String {
 
     let mut out = section("INSIGHT");
     out.push_str(&format!("  {:.0}% of cache is safe to clean\n", safe_pct));
-    out.push_str(&format!(
-        "  {} files open by running processes\n",
-        ctx.open_files
-    ));
     out.push_str(&format!("  Risk: {risk_level}\n"));
     if ctx.protected > 0 {
         out.push_str(&format!(

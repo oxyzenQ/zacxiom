@@ -17,9 +17,22 @@ use std::process::Command;
 
 /// Determine ownership of a file.
 pub fn detect(path: &Path) -> Ownership {
-    // Check dpkg ownership first (Debian/Ubuntu)
-    if let Some(pkg) = dpkg_owns(path) {
-        return Ownership::Package { pkg_name: pkg };
+    let path_str = path.to_string_lossy();
+
+    // Check dpkg ownership only for paths that could plausibly be system packages.
+    // Skipping dpkg for /tmp, /home, and other user paths saves ~30ms per file.
+    if path_str.starts_with("/usr/")
+        || path_str.starts_with("/bin/")
+        || path_str.starts_with("/sbin/")
+        || path_str.starts_with("/lib/")
+        || path_str.starts_with("/lib64/")
+        || path_str.starts_with("/etc/")
+        || path_str.starts_with("/boot/")
+        || path_str.starts_with("/opt/")
+    {
+        if let Some(pkg) = dpkg_owns(path) {
+            return Ownership::Package { pkg_name: pkg };
+        }
     }
 
     // Check if file is in a home directory

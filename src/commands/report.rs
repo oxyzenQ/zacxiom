@@ -7,7 +7,7 @@ use crate::confidence;
 use crate::display;
 use crate::domain;
 use crate::inspect;
-use crate::pipeline::{self, RunContext};
+use crate::pipeline::{self, get_open_files, RunContext};
 use crate::progress;
 use crate::rules;
 use crate::scanner;
@@ -33,7 +33,7 @@ pub fn run_simulate(paths: Vec<String>, depth: usize, json: bool, verbose: bool,
         return;
     }
 
-    let ds = summary::DecisionSummary::from_files(&classified, ctx.open_files.len());
+    let ds = summary::DecisionSummary::from_files(&classified, get_open_files().len());
     println!("\n{}", display::render_decision_summary(&ds));
 
     let domains = domain::summarize(&classified);

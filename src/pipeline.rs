@@ -10,6 +10,15 @@ use crate::scanner;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+/// Lazily-built set of files currently open by any process.
+/// Computed once on first access, reused across commands.
+static OPEN_FILES: OnceLock<HashSet<PathBuf>> = OnceLock::new();
+
+pub(crate) fn get_open_files() -> &'static HashSet<PathBuf> {
+    OPEN_FILES.get_or_init(crate::procfs::build_open_file_set)
+}
 
 pub const BUILD_TARGET: &str = {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -30,7 +39,6 @@ pub const BUILD_TARGET: &str = {
 };
 
 pub struct RunContext {
-    pub open_files: HashSet<PathBuf>,
     pub history_cleaned: HashSet<String>,
     pub health: crate::profiles::HealthMode,
     pub profile: crate::profiles::Profile,
@@ -40,7 +48,6 @@ pub struct RunContext {
 impl RunContext {
     pub fn new(profile_arg: &str) -> Self {
         RunContext {
-            open_files: crate::procfs::build_open_file_set(),
             history_cleaned: {
                 let h = crate::history::History::load();
                 h.previously_cleaned_paths().into_iter().collect()
@@ -160,7 +167,7 @@ pub fn classify(
                         size: e.size,
                         domain: &d,
                         ownership: &o,
-                        open_files: Some(&ctx.open_files),
+                        open_files: Some(get_open_files()),
                         history_cleaned: Some(&ctx.history_cleaned),
                         memory_modifier: modif,
                         age_days: age,

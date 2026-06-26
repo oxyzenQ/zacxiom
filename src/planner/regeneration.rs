@@ -278,8 +278,9 @@ pub(crate) fn build_ecosystem_recommendation(
         eng.category,
         Category::ToolchainManager | Category::ToolchainInstallation
     ) {
+        // Toolchains are NOT safe to auto-clean — recommend against deletion
         return (
-            "Remove toolchain. Requires reinstall to restore.".into(),
+            "Do not delete — installed development tooling.".into(),
             "Installed compiler/runtime — not auto-regenerated.".into(),
             "Reinstall via toolchain manager (rustup, nvm, etc.)".into(),
             Vec::new(),
