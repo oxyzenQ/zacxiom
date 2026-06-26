@@ -9,12 +9,22 @@
 use crate::advisor;
 use crate::planner;
 use crate::workspace;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn run_plan(path: String) {
-    let target = PathBuf::from(&path);
+    // v10: resolve relative paths to absolute
+    let target = if Path::new(&path).is_absolute() {
+        PathBuf::from(&path)
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(&path)
+    };
     if !target.exists() {
         eprintln!("No such path: {path}");
+        if Path::new(&path).is_relative() {
+            eprintln!("  (relative paths are resolved from the current directory)");
+        }
         std::process::exit(1);
     }
     // v8.3.1: P1 — dangerous path hard block

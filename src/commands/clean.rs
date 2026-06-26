@@ -184,18 +184,27 @@ pub fn run_clean(
         return;
     }
 
-    // Actual clean
+    // Actual clean — v10: trash-based recovery
+    let trash_base = snapshot::trash_dir();
     let mut snap = snapshot::Snapshot::new();
+    let trash_for_snap = trash_base.join(&snap.id);
+    let report = cleaner::clean(&classified, smart, force, &trash_for_snap);
+
+    // Record trash paths in snapshot
+    for (orig, trash) in &report.trash_paths {
+        snap.add(orig, 0, Some(trash.clone()));
+    }
+    // Record skipped files for auditing
     for f in &classified {
-        snap.add(&f.path, f.size, None);
+        if !f.decision.is_cleanable(smart, force) {
+            snap.add_skipped(&f.path, f.size);
+        }
     }
     let _snap_path = snap.save().unwrap_or_default();
-    let snap_id = pipeline::chrono_now();
-    let report = cleaner::clean(&classified, smart, force);
 
     if json {
         let out = serde_json::json!({
-            "snapshot_id": snap_id,
+            "snapshot_id": snap.id,
             "files_removed": report.files_removed,
             "bytes_freed": report.bytes_freed,
             "files_skipped": report.files_skipped,

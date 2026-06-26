@@ -34,7 +34,7 @@ pub struct Cli {
 pub enum Command {
     /// Scan filesystem for cache files and classify them
     Scan {
-        #[arg(short, long, num_args = 0..)]
+        #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
@@ -48,7 +48,7 @@ pub enum Command {
 
     /// Show full classified report
     Report {
-        #[arg(short, long, num_args = 0..)]
+        #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
@@ -60,7 +60,7 @@ pub enum Command {
 
     /// Dry-run simulation — see what WOULD happen
     Simulate {
-        #[arg(short, long, num_args = 0..)]
+        #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
@@ -74,7 +74,7 @@ pub enum Command {
 
     /// Execute safe clean (only SAFE files unless --smart/--force)
     Clean {
-        #[arg(short, long, num_args = 0..)]
+        #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
@@ -96,19 +96,24 @@ pub enum Command {
         json: bool,
     },
 
-    /// Explain why a file or domain is safe/risky (★★★★★ trust cards)
+    /// Explain why a path is safe/risky with ★★★★★ trust cards
     ///
-    /// Usage: zacxiom explain ~/.cargo
-    ///        zacxiom explain ~/.rustup
+    /// Usage: zacxiom explain <path>
+    ///
+    /// Examples:
+    ///   zacxiom explain ~/.cargo
+    ///   zacxiom explain ~/.rustup
     Explain {
         /// File path or domain name to explain
         path: String,
     },
 
     Undo {
+        /// Snapshot ID to restore (defaults to latest)
         #[arg(short, long)]
         id: Option<String>,
     },
+    /// Show system status — health, history, snapshots, memory
     Status,
 
     /// Plan cleanup — what is safe and recommended? (read-only, never deletes)
@@ -124,7 +129,7 @@ pub enum Command {
     /// Analyze unknown files — what dominates the Unknown bucket?
     InspectUnknown {
         /// Scan root(s), defaults to auto-detect
-        #[arg(short, long, num_args = 0..)]
+        #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,

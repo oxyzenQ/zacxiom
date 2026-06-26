@@ -24,6 +24,9 @@ pub struct SnapshotEntry {
     pub size: u64,
     pub trash_path: Option<String>,
     pub timestamp: String,
+    /// Whether this file was skipped (not removed), for audit trail.
+    #[serde(default)]
+    pub skipped: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -48,6 +51,18 @@ impl Snapshot {
             size,
             trash_path,
             timestamp: ts(),
+            skipped: false,
+        });
+    }
+
+    /// Record a skipped file for audit trail.
+    pub fn add_skipped(&mut self, path: &str, size: u64) {
+        self.entries.push(SnapshotEntry {
+            path: path.to_string(),
+            size,
+            trash_path: None,
+            timestamp: ts(),
+            skipped: true,
         });
     }
 
@@ -90,10 +105,15 @@ impl Snapshot {
     }
 
     /// Restore files from a snapshot using trash directory.
-    /// Uses copy+remove fallback for cross-filesystem restores.
+    /// Uses rename (fast, same filesystem) with copy+remove fallback for cross-filesystem.
+    /// Cleans up trash entries after successful restore.
     pub fn restore(&self) -> Result<usize, String> {
         let mut restored = 0;
         for entry in &self.entries {
+            // Skip entries that were never removed (audit-only skipped files)
+            if entry.skipped {
+                continue;
+            }
             if let Some(ref trash) = entry.trash_path {
                 let trash_path = PathBuf::from(trash);
                 if trash_path.exists() {
@@ -115,11 +135,28 @@ impl Snapshot {
         }
         Ok(restored)
     }
+
+    /// Permanently delete all trash files for this snapshot.
+    /// Called after user confirms they don't need undo.
+    pub fn purge_trash(&self) {
+        for entry in &self.entries {
+            if let Some(ref trash) = entry.trash_path {
+                let _ = fs::remove_file(PathBuf::from(trash));
+            }
+        }
+    }
 }
 
 fn snapshot_dir() -> PathBuf {
     let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
     PathBuf::from(home).join(".cache/zacxiom/snapshots")
+}
+
+/// Base trash directory for recoverable file deletion.
+/// Files are moved here before snapshots record them.
+pub fn trash_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
+    PathBuf::from(home).join(".cache/zacxiom/trash")
 }
 
 #[cfg(test)]

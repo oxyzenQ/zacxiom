@@ -7,13 +7,28 @@ use crate::discovery;
 use crate::explain;
 use crate::pipeline::{self, RunContext};
 use crate::scanner;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// v10: Resolve a path string to an absolute path, handling relative paths.
+fn resolve_path(path: &str) -> PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(p)
+    }
+}
 
 pub fn run_explain(path: &str) {
-    // v6.2.4: fixed — distinguish file vs directory, scan correctly
-    let target = PathBuf::from(path);
+    // v10: resolve relative paths to absolute for consistent behavior
+    let target = resolve_path(path);
     if !target.exists() {
         eprintln!("No such path: {path}");
+        if Path::new(path).is_relative() {
+            eprintln!("  (relative paths are resolved from the current directory)");
+        }
         std::process::exit(1);
     }
 
