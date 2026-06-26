@@ -1,49 +1,12 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Structured rule database — replaces giant if/else chains.
-//!
-//! Rules are ordered by priority. First match wins.
-//! Each rule specifies a path pattern, resulting category, and risk level.
-//!
-//! v7: Rules carry artifact intelligence — ownership, regeneration,
-//! dependency, and deletion impact metadata.
+//! Rule database — all classification rules in priority order.
 
-use super::types::{Category, RiskLevel};
-use std::path::Path;
-use std::sync::OnceLock;
+use super::Rule;
+use crate::engine::types::{Category, RiskLevel};
 
-/// A single classification rule.
-///
-/// v7: Enriched with artifact intelligence fields.
-pub struct Rule {
-    pub name: &'static str,
-    /// Match logic: returns true if this rule applies to the given path.
-    pub matches: fn(&Path, &str) -> bool,
-    pub category: Category,
-    pub risk_level: RiskLevel,
-    pub regenerable: bool,
-    pub reason: &'static str,
-    // ── v7: Artifact Intelligence fields ──────────────────────
-    /// Who created this artifact? (e.g. "Cargo", "Rustup", "npm", "Browser")
-    pub created_by: &'static str,
-    /// How to regenerate this artifact? (e.g. "cargo build", "rustup toolchain install")
-    pub regenerated_by: &'static str,
-    /// What does this artifact depend on? (e.g. "Cargo.toml", "package.json")
-    pub depends_on: &'static str,
-    /// What happens if this artifact is deleted?
-    pub deletion_impact: &'static str,
-}
-
-/// Build the full rule database in priority order.
-/// Cached via OnceLock — called once, shared across all classify() invocations.
-/// Priority: system-protected > home-critical > config > cache > app-specific > fallback.
-pub fn rule_database() -> &'static [Rule] {
-    static RULES: OnceLock<Vec<Rule>> = OnceLock::new();
-    RULES.get_or_init(build_rules)
-}
-
-fn build_rules() -> Vec<Rule> {
+pub(crate) fn build_rules() -> Vec<Rule> {
     vec![
         // ═══════════════════════════════════════════════════════
         // LAYER 1: System — non-negotiable, never cleanable
@@ -1139,70 +1102,4 @@ fn build_rules() -> Vec<Rule> {
             deletion_impact: "Custom config settings lost. Application resets to defaults.",
         },
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rule_priority_system_first() {
-        let rules = rule_database();
-        // First rules should be system protection
-        assert_eq!(rules[0].name, "sys-bin-usr");
-        assert_eq!(rules[1].name, "sys-bin-root");
-        assert_eq!(rules[2].name, "sys-etc");
-    }
-
-    #[test]
-    fn test_system_binary_not_cache() {
-        let rules = rule_database();
-        let brave_rule = rules.iter().find(|r| r.name == "cache-browser").unwrap();
-        // brave binary path should NOT match browser cache rule
-        assert!(!(brave_rule.matches)(
-            Path::new("/usr/bin/brave"),
-            &"/usr/bin/brave".to_lowercase()
-        ));
-        // But brave cache SHOULD match
-        assert!((brave_rule.matches)(
-            Path::new("/home/user/.cache/BraveSoftware/Brave-Browser/Cache/data_0"),
-            &"/home/user/.cache/bravesoftware/brave-browser/cache/data_0".to_lowercase()
-        ));
-    }
-
-    #[test]
-    fn test_etc_never_cache() {
-        let rules = rule_database();
-        let cache_rule = rules.iter().find(|r| r.name == "cache-user").unwrap();
-        assert!(!(cache_rule.matches)(
-            Path::new("/etc/environment"),
-            &"/etc/environment".to_lowercase()
-        ));
-    }
-
-    #[test]
-    fn test_home_root_not_cleanable() {
-        let rules = rule_database();
-        let home_rule = rules.iter().find(|r| r.name == "home-root").unwrap();
-        assert!((home_rule.matches)(
-            Path::new("/home/user"),
-            &"/home/user".to_lowercase()
-        ));
-        assert!(!(home_rule.matches)(
-            Path::new("/home/user/.cache"),
-            &"/home/user/.cache".to_lowercase()
-        ));
-    }
-
-    #[test]
-    fn test_ssh_is_protected() {
-        let rules = rule_database();
-        let ssh_rule = rules.iter().find(|r| r.name == "sec-ssh").unwrap();
-        assert!((ssh_rule.matches)(
-            Path::new("/home/user/.ssh/id_ed25519"),
-            &"/home/user/.ssh/id_ed25519".to_lowercase()
-        ));
-        assert_eq!(ssh_rule.category, Category::SecurityCredential);
-        assert_eq!(ssh_rule.risk_level, RiskLevel::Critical);
-    }
 }
