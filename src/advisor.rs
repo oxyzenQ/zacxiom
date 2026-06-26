@@ -393,6 +393,7 @@ fn ecosystem_action_override(
                 "dist" => (format!("{pm} run build"), true),
                 ".next" => ("next build".to_string(), true),
                 ".turbo" => ("turbo build".to_string(), true),
+                ".parcel-cache" => (format!("{pm} run build"), true),
                 _ => (planner_action.to_string(), false),
             }
         }

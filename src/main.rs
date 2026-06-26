@@ -348,17 +348,41 @@ fn check_update() {
         }
     };
 
-    let status_text = match compare_versions(CURRENT_VERSION, &latest_tag) {
-        UpdateStatus::UpToDate => "up to date",
-        UpdateStatus::UpdateAvailable => "update available",
-        UpdateStatus::CurrentIsNewer => "current is newer than latest release",
-    };
+    let commit_hash = option_env!("ZACXIOM_GIT_HASH").unwrap_or("unknown");
 
-    println!("zacxiom update check");
-    println!("Current: {}", normalize_version(CURRENT_VERSION));
-    println!("Latest:  {}", normalize_version(&latest_tag));
-    println!("Status:  {status_text}");
-    println!("Source:  {RELEASES_URL}");
+    match compare_versions(CURRENT_VERSION, &latest_tag) {
+        UpdateStatus::CurrentIsNewer => {
+            println!("zacxiom update check");
+            println!();
+            println!("  Local build is newer than the latest published release.");
+            println!();
+            println!("  Current build:");
+            println!(
+                "    {} (commit {})",
+                normalize_version(CURRENT_VERSION),
+                commit_hash
+            );
+            println!();
+            println!("  Latest release:");
+            println!("    {}", normalize_version(&latest_tag));
+            println!();
+            println!("  Source:  {RELEASES_URL}");
+        }
+        UpdateStatus::UpToDate => {
+            println!("zacxiom update check");
+            println!("Current: {}", normalize_version(CURRENT_VERSION));
+            println!("Latest:  {}", normalize_version(&latest_tag));
+            println!("Status:  up to date");
+            println!("Source:  {RELEASES_URL}");
+        }
+        UpdateStatus::UpdateAvailable => {
+            println!("zacxiom update check");
+            println!("Current: {}", normalize_version(CURRENT_VERSION));
+            println!("Latest:  {}", normalize_version(&latest_tag));
+            println!("Status:  update available");
+            println!("Source:  {RELEASES_URL}");
+        }
+    }
 }
 
 fn resolve_roots(paths: Vec<String>) -> Vec<PathBuf> {

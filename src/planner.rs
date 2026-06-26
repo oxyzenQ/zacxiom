@@ -274,6 +274,20 @@ fn compute_size(path: &Path) -> u64 {
     total
 }
 
+/// Detect the Node.js package manager from project manifest files.
+fn detect_node_pm_from_manifests(manifests: &[std::path::PathBuf]) -> &'static str {
+    for m in manifests {
+        let name = m.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        match name {
+            "pnpm-lock.yaml" => return "pnpm",
+            "yarn.lock" => return "yarn",
+            "package-lock.json" => return "npm",
+            _ => {}
+        }
+    }
+    "npm"
+}
+
 /// Build ecosystem-aware recommendations.
 /// Prefers ecosystem commands over raw `rm -rf`.
 /// Returns (recommendation, reason, regeneration, suggested_commands).
@@ -310,12 +324,17 @@ fn build_ecosystem_recommendation(
                 String::new(),
                 vec!["cargo clean".into()],
             ),
-            Some(Ecosystem::Node) => (
-                "Clean dependency installations instead.".into(),
-                "Project root contains non-regenerable source code.".into(),
-                String::new(),
-                vec!["npm install".into()],
-            ),
+            Some(Ecosystem::Node) => {
+                let pm = ownership.as_ref().map_or("npm", |om| {
+                    detect_node_pm_from_manifests(&om.project.manifests)
+                });
+                (
+                    "Clean dependency installations instead.".into(),
+                    "Project root contains non-regenerable source code.".into(),
+                    String::new(),
+                    vec![format!("{pm} install")],
+                )
+            }
             Some(Ecosystem::Python) => (
                 "Clean virtual environment and cache instead.".into(),
                 "Project root contains non-regenerable source code.".into(),
@@ -348,16 +367,19 @@ fn build_ecosystem_recommendation(
                 vec!["cargo clean".into()],
             ),
             Some(Ecosystem::Node) => {
+                let pm = ownership.as_ref().map_or("npm", |om| {
+                    detect_node_pm_from_manifests(&om.project.manifests)
+                });
                 let cmd = if path_last == "node_modules" {
-                    "npm install"
+                    format!("{pm} install")
                 } else {
-                    "npm run build"
+                    format!("{pm} run build")
                 };
                 (
                     "Remove dependencies and reinstall if needed.".into(),
                     "Installed packages are declared in package.json and re-downloadable.".into(),
-                    "npm install".into(),
-                    vec![cmd.into()],
+                    format!("{pm} install"),
+                    vec![cmd],
                 )
             }
             Some(Ecosystem::Go) => (
@@ -426,6 +448,44 @@ fn build_ecosystem_recommendation(
 
     // ── Temporary files ──
     if eng.category == Category::TemporaryFile {
+        // Even when classified as TemporaryFile (e.g. /tmp/ projects),
+        // provide ecosystem-aware commands for known artifacts.
+        match ecosystem {
+            Some(Ecosystem::Node) => match path_last.as_str() {
+                "node_modules" => {
+                    let pm = ownership.as_ref().map_or("npm", |om| {
+                        detect_node_pm_from_manifests(&om.project.manifests)
+                    });
+                    return (
+                        "Remove dependencies and reinstall.".into(),
+                        "Packages are declared in package.json and re-downloadable.".into(),
+                        format!("{pm} install"),
+                        vec![format!("{pm} install")],
+                    );
+                }
+                "dist" => {
+                    let pm = ownership.as_ref().map_or("npm", |om| {
+                        detect_node_pm_from_manifests(&om.project.manifests)
+                    });
+                    return (
+                        "Remove build output.".into(),
+                        "Build output is regenerable from source.".into(),
+                        format!("{pm} run build"),
+                        vec![format!("{pm} run build")],
+                    );
+                }
+                _ => {}
+            },
+            Some(Ecosystem::Rust) if path_last.as_str() == "target" => {
+                return (
+                    "Remove build artifacts.".into(),
+                    "Compiled binaries are fully regenerable from source.".into(),
+                    "cargo build".into(),
+                    vec!["cargo clean".into()],
+                );
+            }
+            _ => {}
+        }
         return (
             "Remove temporary files.".into(),
             "Designed by the OS and applications to be disposable.".into(),
@@ -446,12 +506,26 @@ fn build_ecosystem_recommendation(
                 "cargo build (re-downloads dependencies)".into(),
                 vec!["cargo clean".into()],
             ),
-            Some(Ecosystem::Node) => (
-                "Remove downloaded packages.".into(),
-                "Packages are re-downloadable from the npm registry.".into(),
-                "npm install (re-downloads packages)".into(),
-                vec!["npm cache clean --force".into()],
-            ),
+            Some(Ecosystem::Node) => {
+                let pm = ownership.as_ref().map_or("npm", |om| {
+                    detect_node_pm_from_manifests(&om.project.manifests)
+                });
+                if path_last == "node_modules" {
+                    (
+                        "Remove dependencies and reinstall.".into(),
+                        "Packages are declared in package.json and re-downloadable.".into(),
+                        format!("{pm} install"),
+                        vec![format!("{pm} install")],
+                    )
+                } else {
+                    (
+                        "Remove downloaded packages.".into(),
+                        "Packages are re-downloadable from the npm registry.".into(),
+                        format!("{pm} install (re-downloads packages)"),
+                        vec![format!("{pm} cache clean --force")],
+                    )
+                }
+            }
             Some(Ecosystem::Python) => (
                 "Remove downloaded packages.".into(),
                 "Packages are re-downloadable from PyPI.".into(),

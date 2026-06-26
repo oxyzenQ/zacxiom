@@ -896,7 +896,13 @@ fn build_rules() -> Vec<Rule> {
         },
         Rule {
             name: "app-node-modules",
-            matches: |_, lower| lower.contains("/node_modules/"),
+            matches: |p, lower| {
+                let name = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                name == "node_modules" || lower.contains("/node_modules/")
+            },
             category: Category::DownloadedArtifact,
             risk_level: RiskLevel::Low,
             regenerable: true,
