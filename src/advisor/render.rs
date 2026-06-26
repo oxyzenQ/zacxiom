@@ -246,5 +246,24 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &std::path::Path) -> Stri
     out.push('\n');
     out.push_str("  Source code is NEVER recommended for cleanup.\n");
 
+    // v10: Evidence summary for auditability
+    if let Some(eco) = advisor.ecosystem {
+        if eco == crate::discovery::Ecosystem::Rust {
+            let evidence_report =
+                crate::evidence::collect_rust_evidence(_root, advisor.directory_size);
+            out.push('\n');
+            out.push_str(&color::section_header("EVIDENCE"));
+            for item in &evidence_report.evidence.items {
+                if item.passed {
+                    out.push_str(&format!("  {} {}\n", item.icon(), item.title));
+                }
+            }
+            out.push_str(&format!(
+                "\n  Confidence: {}%  No hidden scoring.\n",
+                evidence_report.confidence.final_score
+            ));
+        }
+    }
+
     out
 }

@@ -145,4 +145,20 @@ pub enum Command {
     ///
     /// Usage: zacxiom check-update
     CheckUpdate,
+
+    /// Show complete confidence calculation for a path
+    ///
+    /// Usage: zacxiom explain-confidence ~/projects/foo
+    ExplainConfidence {
+        /// Path to analyze
+        path: String,
+    },
+
+    /// Show detailed risk reasoning for a path
+    ///
+    /// Usage: zacxiom explain-risk ~/projects/foo
+    ExplainRisk {
+        /// Path to analyze
+        path: String,
+    },
 }

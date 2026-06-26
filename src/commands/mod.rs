@@ -8,6 +8,8 @@
 pub mod check_update;
 pub mod clean;
 pub mod explain;
+pub mod explain_confidence;
+pub mod explain_risk;
 pub mod inspect;
 pub mod plan;
 pub mod report;
@@ -18,6 +20,8 @@ pub mod undo;
 pub use check_update::check_update;
 pub use clean::run_clean;
 pub use explain::run_explain;
+pub use explain_confidence::run_explain_confidence;
+pub use explain_risk::run_explain_risk;
 pub use inspect::run_inspect_unknown;
 pub use plan::run_plan;
 pub use report::run_simulate;

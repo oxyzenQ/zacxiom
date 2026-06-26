@@ -23,6 +23,7 @@ mod domain;
 mod ecosystem;
 mod engine;
 mod errors;
+mod evidence;
 mod execution_order;
 mod explain;
 mod history;
@@ -121,6 +122,8 @@ fn main() {
             verbose,
         } => commands::run_inspect_unknown(paths, depth, json, verbose),
         Command::CheckUpdate => commands::check_update(),
+        Command::ExplainConfidence { path } => commands::run_explain_confidence(path),
+        Command::ExplainRisk { path } => commands::run_explain_risk(path),
     }
 }
 
