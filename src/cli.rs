@@ -140,4 +140,9 @@ pub enum Command {
         #[arg(long)]
         verbose: bool,
     },
+
+    /// Check for latest upstream release
+    ///
+    /// Usage: zacxiom check-update
+    CheckUpdate,
 }

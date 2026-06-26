@@ -877,6 +877,20 @@ fn circled_number(n: usize) -> &'static str {
     }
 }
 
+/// Ecosystem-specific regeneration label (v8.5.1: P5).
+///
+/// Replaces the generic "Rebuild" label with wording appropriate
+/// for each ecosystem.
+fn ecosystem_regen_label(ecosystem: Option<Ecosystem>) -> &'static str {
+    match ecosystem {
+        Some(Ecosystem::Rust) => "Rebuild",
+        Some(Ecosystem::Node) => "Reinstall time",
+        Some(Ecosystem::Python) => "Environment setup",
+        Some(Ecosystem::Go) => "Recompile",
+        None => "Rebuild",
+    }
+}
+
 /// Render the full advisor output.
 ///
 /// v8.5: Grouped, action-first, decision-centric output.
@@ -950,15 +964,16 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
         ));
     }
 
-    // Expected rebuild impact
+    // Expected regeneration impact (P5: ecosystem-specific label)
     if let Some(slowest) = advisor
         .groups
         .iter()
         .max_by_key(|g| g.execution.regeneration_time.len())
     {
+        let regen_label = format!("{} impact:", ecosystem_regen_label(advisor.ecosystem));
         out.push_str(&format!(
             "  {:<22} {}\n",
-            "Rebuild impact:", slowest.execution.regeneration_time
+            regen_label, slowest.execution.regeneration_time
         ));
     }
 
@@ -1001,14 +1016,19 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
             group.execution.cleanup_time
         ));
 
-        // Regeneration time
+        // Regeneration time (P5: ecosystem-specific label)
+        let regen_label = ecosystem_regen_label(advisor.ecosystem);
         out.push_str(&format!(
-            "     Rebuild:    {}\n",
+            "     {:<12}{}\n",
+            format!("{}:", regen_label),
             group.execution.regeneration_time
         ));
 
-        // Risk: always None for safe items (planner guarantees this)
-        out.push_str(&format!("     Risk:       {}\n", color::purple("None")));
+        // Risk: always Verified Safe for items shown (planner guarantees this)
+        out.push_str(&format!(
+            "     Risk:       {}\n",
+            color::purple("Verified Safe")
+        ));
 
         // Confidence
         out.push_str(&format!("     Confidence: {}%\n", group.confidence_pct));
@@ -1057,10 +1077,12 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
     for (i, group) in advisor.groups.iter().enumerate() {
         let label = circled_number(i + 1);
         out.push_str(&format!("  {} {}\n", label, group.action));
+        let regen_key = ecosystem_regen_label(advisor.ecosystem).to_lowercase();
         out.push_str(&format!(
-            "     {}  {}  rebuild: {}\n",
+            "     {}  {}  {}: {}\n",
             human_size(group.total_size),
             group.priority_level.display(),
+            regen_key,
             group.execution.regeneration_time
         ));
     }
@@ -1665,5 +1687,68 @@ mod tests {
                 "group total should match advisor total"
             );
         }
+    }
+
+    // ── v8.5.1: UX Polish tests ──
+
+    #[test]
+    fn test_p3_risk_says_verified_safe_not_none() {
+        // P3: Advisor risk must say "Verified Safe", not "None"
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let adv = advise(&root);
+        let output = render_advisor(&adv, &root);
+        assert!(
+            output.contains("Verified Safe"),
+            "Advisor output should contain 'Verified Safe', got:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("Risk:       None") && !output.contains("Risk:       \u{1b}"),
+            "Advisor output should NOT contain 'Risk: None'"
+        );
+    }
+
+    #[test]
+    fn test_p5_rust_uses_rebuild_label() {
+        // P5: Rust ecosystem should use "Rebuild" label
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let adv = advise(&root);
+        assert_eq!(adv.ecosystem, Some(Ecosystem::Rust));
+        let output = render_advisor(&adv, &root);
+        assert!(
+            output.contains("Rebuild:"),
+            "Rust advisor should use 'Rebuild:' label, got:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_p5_node_uses_reinstall_label() {
+        // P5: Node ecosystem should use "Reinstall time" label
+        let (_dir, root) = setup_node_project_with_artifacts();
+        let adv = advise(&root);
+        assert_eq!(adv.ecosystem, Some(Ecosystem::Node));
+        let output = render_advisor(&adv, &root);
+        assert!(
+            output.contains("Reinstall time:"),
+            "Node advisor should use 'Reinstall time:' label, got:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_p5_ecosystem_regen_label_helper() {
+        // P5: Unit test for the helper function
+        assert_eq!(ecosystem_regen_label(Some(Ecosystem::Rust)), "Rebuild");
+        assert_eq!(
+            ecosystem_regen_label(Some(Ecosystem::Node)),
+            "Reinstall time"
+        );
+        assert_eq!(
+            ecosystem_regen_label(Some(Ecosystem::Python)),
+            "Environment setup"
+        );
+        assert_eq!(ecosystem_regen_label(Some(Ecosystem::Go)), "Recompile");
+        assert_eq!(ecosystem_regen_label(None), "Rebuild");
     }
 }

@@ -183,6 +183,7 @@ fn main() {
             json,
             verbose,
         } => run_inspect_unknown(paths, depth, json, verbose),
+        Command::CheckUpdate => check_update(),
     }
 }
 

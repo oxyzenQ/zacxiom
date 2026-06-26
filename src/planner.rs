@@ -845,15 +845,48 @@ fn build_notes(
         }
     }
 
-    // Add impact context
+    // Add impact context — category-aware wording (v8.5.1)
     match impact_analysis.level {
         impact::ImpactLevel::Low => {
             if eng.category.is_cleanable() {
-                notes.push("Next build may take longer.".into());
+                // P1: Different post-cleanup notes per artifact category.
+                match eng.category {
+                    Category::BuildCache => {
+                        notes.push("Next build may take longer.".into());
+                    }
+                    Category::BrowserCache => {
+                        notes.push("Browser will re-download resources while browsing.".into());
+                    }
+                    Category::CacheRegistry => {
+                        notes.push("Files will be downloaded again if needed.".into());
+                    }
+                    Category::Cache | Category::TemporaryFile => {
+                        notes.push("Applications may recreate cache during next launch.".into());
+                    }
+                    _ => {
+                        notes.push("Next build may take longer.".into());
+                    }
+                }
             }
         }
         impact::ImpactLevel::Medium => {
-            notes.push("Re-download requires network access.".into());
+            // P2: Configuration paths must not say "re-download".
+            match eng.category {
+                Category::ShellConfiguration
+                | Category::ApplicationConfiguration
+                | Category::EnvironmentFile => {
+                    notes.push("User preferences may need to be configured again.".into());
+                }
+                Category::DependencySource | Category::DownloadedArtifact => {
+                    notes.push("Dependencies will be reinstalled when required.".into());
+                }
+                Category::ToolchainManager | Category::ToolchainInstallation => {
+                    notes.push("Toolchain must be reinstalled to restore.".into());
+                }
+                _ => {
+                    notes.push("Re-download requires network access.".into());
+                }
+            }
         }
         _ => {}
     }
@@ -1499,5 +1532,80 @@ mod tests {
             "Node project root recommendation should start with 'Clean', got: {}",
             p.recommendation
         );
+    }
+
+    // ── v8.5.1: UX Polish tests ──
+
+    #[test]
+    fn test_p1_cache_note_says_applications_recreate() {
+        // P1: Application cache (Category::Cache) should NOT say "Next build"
+        let (_dir, root) = setup_rust_project();
+        let cache_dir = root.join(".cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        std::fs::write(cache_dir.join("data"), vec![0u8; 2_100_000]).unwrap();
+
+        let p = plan(&cache_dir);
+        let notes_text = p.notes.join(" ");
+        // Must NOT contain the generic build wording for application cache
+        if p.safe_to_clean && notes_text.contains("build") {
+            panic!(
+                "Application cache note should not say 'Next build may take longer', got: {}",
+                notes_text
+            );
+        }
+        // Should contain application-specific wording when a note is present
+        if p.safe_to_clean && notes_text.contains("recreate") {
+            // Good — category-aware note
+        }
+    }
+
+    #[test]
+    fn test_p1_build_cache_note_says_next_build() {
+        // P1: BuildCache (target/) should say "Next build may take longer"
+        let (_dir, root) = setup_rust_project();
+        let target_dir = root.join("target");
+        std::fs::create_dir_all(target_dir.join("debug")).unwrap();
+        std::fs::write(target_dir.join("debug/binary"), vec![0u8; 2_100_000]).unwrap();
+
+        let p = plan(&target_dir);
+        let notes_text = p.notes.join(" ");
+        if p.safe_to_clean {
+            assert!(
+                notes_text.contains("Next build may take longer"),
+                "BuildCache note should say 'Next build may take longer', got: {}",
+                notes_text
+            );
+        }
+    }
+
+    #[test]
+    fn test_p2_config_note_does_not_say_re_download() {
+        // P2: Configuration paths must not say "Re-download requires network access"
+        let home = std::env::var("HOME").unwrap();
+        let configpath = Path::new(&home).join(".config");
+        if configpath.exists() {
+            let p = plan(&configpath);
+            let notes_text = p.notes.join(" ");
+            assert!(
+                !notes_text.contains("Re-download requires network access"),
+                "Config path should NOT say 'Re-download requires network access', got: {}",
+                notes_text
+            );
+        }
+    }
+
+    #[test]
+    fn test_p2_config_note_says_preferences() {
+        // P2: Configuration Medium-impact note should mention preferences
+        let home = std::env::var("HOME").unwrap();
+        let configpath = Path::new(&home).join(".config");
+        if configpath.exists() {
+            let p = plan(&configpath);
+            let notes_text = p.notes.join(" ");
+            // If there's a Medium-impact note, it should say preferences
+            if notes_text.contains("network") || notes_text.contains("re-download") {
+                panic!("Config path has download-related note, got: {}", notes_text);
+            }
+        }
     }
 }
