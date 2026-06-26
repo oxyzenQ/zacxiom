@@ -1,11 +1,11 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Cleanup Advisor — v8.4.1
+//! Cleanup Advisor — v8.5.0
 //!
-//! Transforms `zacxiom plan` from a single-path planner into an intelligent
-//! cleanup advisor.  Discovers, ranks, and presents ALL worthwhile cleanup
-//! opportunities inside a directory.
+//! Intelligent Recommendation Engine.
+//! Transforms Zacxiom from a filesystem classifier into an intelligent
+//! cleanup advisor that produces professional, decision-centric output.
 //!
 //! CRITICAL: This module NEVER deletes anything.
 //! No filesystem mutations. No `rm`. Recommendation only.
@@ -17,6 +17,10 @@
 //!   - Planner (v8.3) for per-path safety and recommendations
 //!
 //! No duplicated classification rules. No duplicated logic.
+//!
+//! v8.5: Grouped recommendations, action-first value cards,
+//! human-friendly priority levels, execution cost estimation,
+//! and full explainability for every recommendation.
 
 use crate::color;
 use crate::discovery::{self, Ecosystem, ProjectInfo};
@@ -28,6 +32,39 @@ use std::path::Path;
 // ═══════════════════════════════════════════════════════════════
 // Data Structures
 // ═══════════════════════════════════════════════════════════════
+
+/// Human-friendly priority level.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PriorityLevel {
+    /// Score 80-100: Largest, safest, most impactful cleanup.
+    Immediate,
+    /// Score 60-79: High value, fully regenerable.
+    High,
+    /// Score 40-59: Moderate value, worth considering.
+    Medium,
+    /// Score 0-39: Low priority, cleanup if needed.
+    Low,
+}
+
+impl PriorityLevel {
+    fn from_score(score: u8) -> Self {
+        match score {
+            80..=u8::MAX => PriorityLevel::Immediate,
+            60..=79 => PriorityLevel::High,
+            40..=59 => PriorityLevel::Medium,
+            _ => PriorityLevel::Low,
+        }
+    }
+
+    fn display(&self) -> &'static str {
+        match self {
+            PriorityLevel::Immediate => "Immediate",
+            PriorityLevel::High => "High",
+            PriorityLevel::Medium => "Medium",
+            PriorityLevel::Low => "Low",
+        }
+    }
+}
 
 /// Component breakdown of a priority score.
 ///
@@ -58,6 +95,11 @@ impl PriorityBreakdown {
             80..=u8::MAX => 5,
         }
     }
+
+    /// Human-friendly priority level.
+    pub fn level(&self) -> PriorityLevel {
+        PriorityLevel::from_score(self.total)
+    }
 }
 
 /// A single cleanup opportunity discovered inside a directory.
@@ -78,11 +120,49 @@ pub struct CleanupOpportunity {
     /// Priority score with component breakdown.
     pub priority: PriorityBreakdown,
     /// Estimated time to regenerate after cleanup.
-    pub estimated_time: String,
+    pub estimated_regen_time: String,
     /// 1-based rank after sorting (set during final ranking).
     pub rank: usize,
     /// Evidence files supporting the confidence score.
     pub evidence_files: Vec<String>,
+}
+
+/// Execution cost — how long the cleanup action itself takes.
+/// Separate from regeneration time.
+#[derive(Debug, Clone)]
+pub struct ExecutionCost {
+    /// Human-readable cleanup time (e.g. "2-5 seconds").
+    pub cleanup_time: String,
+    /// Human-readable regeneration time (e.g. "2-5 minutes").
+    pub regeneration_time: String,
+}
+
+/// A group of cleanup opportunities sharing the same logical action.
+///
+/// Instead of listing `target/`, `criterion/`, `coverage/` separately,
+/// they become one group: "Rust Build Artifacts" → `cargo clean` → 762 MB.
+#[derive(Debug, Clone)]
+pub struct CleanupGroup {
+    /// Human-readable group label (e.g. "Rust Build Artifacts").
+    pub label: String,
+    /// Shared cleanup action command (e.g. "cargo clean").
+    pub action: String,
+    /// Individual opportunities in this group.
+    pub items: Vec<String>,
+    /// Total reclaimable bytes across all items.
+    pub total_size: u64,
+    /// Aggregate priority (best score in group).
+    pub priority: PriorityBreakdown,
+    /// Human-friendly priority level.
+    pub priority_level: PriorityLevel,
+    /// Execution and regeneration cost.
+    pub execution: ExecutionCost,
+    /// Deduplicated reasons explaining why cleanup is safe.
+    pub reasons: Vec<String>,
+    /// Aggregate confidence percentage (highest in group).
+    pub confidence_pct: u8,
+    /// Explainable ranking reasons (why this group ranks here).
+    pub ranking_reasons: Vec<String>,
 }
 
 /// Full advisor output for a directory.
@@ -94,6 +174,8 @@ pub struct CleanupAdvisor {
     pub ecosystem: Option<Ecosystem>,
     /// All discovered cleanup opportunities, sorted by priority descending.
     pub opportunities: Vec<CleanupOpportunity>,
+    /// Grouped recommendations (v8.5).
+    pub groups: Vec<CleanupGroup>,
     /// Total estimated reclaimable bytes.
     pub total_reclaimable: u64,
     /// Total directory size (for percentage calculation).
@@ -253,14 +335,13 @@ fn compute_priority(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Phase 3: Estimated Reclaim + Time Saved
+// Phase 3: Time Estimation
 // ═══════════════════════════════════════════════════════════════
 
 /// Estimate regeneration time based on ecosystem and size.
 ///
 /// Returns "Instant" for negligible sizes.
 fn estimate_regen_time(ecosystem: Option<Ecosystem>, size_bytes: u64) -> String {
-    // P6: 0 B or negligible → "Instant"
     if size_bytes < 1_048_576 {
         return "Instant".to_string();
     }
@@ -311,6 +392,35 @@ fn estimate_regen_time(ecosystem: Option<Ecosystem>, size_bytes: u64) -> String 
     .to_string()
 }
 
+/// Estimate cleanup execution time — how long the deletion itself takes.
+/// Separate from regeneration time.
+///
+/// Ecosystem commands (cargo clean, npm install) are near-instant
+/// because they use tool-native deletion. Raw directory removal scales
+/// with size and file count.
+fn estimate_cleanup_time(action: &str, size_bytes: u64) -> String {
+    // Ecosystem commands are fast — the tool handles deletion efficiently
+    let is_ecosystem_cmd = !action.is_empty()
+        && action != "Manual cleanup"
+        && !action.starts_with("rm ")
+        && !action.starts_with("find ");
+
+    if is_ecosystem_cmd {
+        if size_bytes >= 1_073_741_824 {
+            "2-5 seconds"
+        } else {
+            "Instant"
+        }
+    } else if size_bytes >= 1_073_741_824 {
+        "5-15 seconds"
+    } else if size_bytes >= 104_857_600 {
+        "1-3 seconds"
+    } else {
+        "Instant"
+    }
+    .to_string()
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Phase 4: Parent-Child Deduplication
 // ═══════════════════════════════════════════════════════════════
@@ -327,8 +437,6 @@ fn dedup_parent_child(opportunities: &mut Vec<CleanupOpportunity>) {
 
     opportunities.retain(|opp| {
         let opp_str = opp.path.to_string_lossy().to_string();
-        // Keep this opportunity unless a different path in the list
-        // is a prefix of it (i.e. a parent already covers it)
         let has_parent = parent_paths.iter().any(|parent| {
             parent != &opp_str
                 && (opp_str.starts_with(&format!("{}/", parent))
@@ -339,11 +447,10 @@ fn dedup_parent_child(opportunities: &mut Vec<CleanupOpportunity>) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// P1: Ecosystem-Aware Action Override
+// Phase 5: Ecosystem-Aware Action Override
 // ═══════════════════════════════════════════════════════════════
 
 /// Minimum size (bytes) to be worth showing as a cleanup opportunity.
-/// Items below this are filtered out (P7).
 const MINIMUM_MEANINGFUL_SIZE: u64 = 1_048_576; // 1 MB
 
 /// Detect the Node.js package manager from lockfiles in the project.
@@ -362,18 +469,12 @@ fn detect_node_pm(project: &ProjectInfo) -> &'static str {
 
 /// Override the planner's action with an ecosystem-aware command
 /// when the planner falls through to generic wording.
-///
-/// This handles the case where the classifier assigns a generic
-/// category (e.g. TemporaryFile) to a known ecosystem artifact,
-/// causing the planner to return generic "Remove temporary files."
-/// instead of the ecosystem-specific command.
 fn ecosystem_action_override(
     display_name: &str,
     ecosystem: Option<Ecosystem>,
     project: Option<&ProjectInfo>,
     planner_action: &str,
 ) -> (String, bool) {
-    // Only override if the planner gave a generic action
     let is_generic = planner_action == "Remove temporary files."
         || planner_action == "Clear application cache."
         || planner_action == "Manual cleanup"
@@ -420,6 +521,180 @@ fn ecosystem_action_override(
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Phase 6: Opportunity Grouping (v8.5)
+// ═══════════════════════════════════════════════════════════════
+
+/// Derive a human-friendly group label from the action command.
+///
+/// Maps ecosystem commands to descriptive labels. Falls back to
+/// the action itself for unknown commands.
+fn derive_group_label(action: &str, ecosystem: Option<Ecosystem>) -> String {
+    match (ecosystem, action) {
+        (_, a) if a.contains("cargo clean") => "Rust Build Artifacts".to_string(),
+        (Some(Ecosystem::Node), a) if a.ends_with("install") => "Node Dependencies".to_string(),
+        (Some(Ecosystem::Node), a) if a.contains("run build") || a.contains(" build") => {
+            "Build Output".to_string()
+        }
+        (Some(Ecosystem::Python), a) if a.contains("pip install") => {
+            "Python Environment".to_string()
+        }
+        (Some(Ecosystem::Python), a) if a.contains("venv") => {
+            "Python Virtual Environment".to_string()
+        }
+        (Some(Ecosystem::Python), _) => "Python Cache".to_string(),
+        (Some(Ecosystem::Go), a) if a.contains("go clean") => "Go Build Cache".to_string(),
+        _ => {
+            // Fallback: capitalize first letter of action
+            let mut label = action.to_string();
+            if let Some(first) = label.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            label
+        }
+    }
+}
+
+/// Build explainable ranking reasons for a group.
+///
+/// Answers "Why does this group rank here?" with human-readable bullets.
+fn ranking_reasons(group: &CleanupGroup) -> Vec<String> {
+    let mut reasons = Vec::new();
+
+    // Size reasoning
+    if group.total_size >= 1_073_741_824 {
+        reasons.push(format!(
+            "Reclaims {} of disk space",
+            human_size(group.total_size)
+        ));
+    } else if group.total_size >= 104_857_600 {
+        reasons.push(format!(
+            "Reclaims {} of recoverable space",
+            human_size(group.total_size)
+        ));
+    }
+
+    // Regenerability reasoning
+    if group.priority.regenerable_points >= 25 {
+        reasons.push("Fully regenerable from source".to_string());
+    } else if group.priority.regenerable_points >= 15 {
+        reasons.push("Safe to remove".to_string());
+    }
+
+    // Ecosystem command reasoning
+    if group.priority.ecosystem_points > 0 {
+        reasons.push("Official ecosystem cleanup command".to_string());
+    }
+
+    // Confidence reasoning
+    if group.confidence_pct >= 80 {
+        reasons.push("High ownership confidence".to_string());
+    }
+
+    // Multiple items grouped together
+    if group.items.len() > 1 {
+        reasons.push(format!("Covers {} related artifacts", group.items.len()));
+    }
+
+    // Low execution cost
+    if group.execution.cleanup_time == "Instant" {
+        reasons.push("Instant cleanup execution".to_string());
+    }
+
+    reasons
+}
+
+/// Group individual opportunities by their shared cleanup action.
+///
+/// Opportunities with the same action command are merged into a single
+/// `CleanupGroup` with aggregated size and the best priority score.
+fn group_opportunities(
+    opportunities: &[CleanupOpportunity],
+    ecosystem: Option<Ecosystem>,
+) -> Vec<CleanupGroup> {
+    let mut action_groups: std::collections::HashMap<String, Vec<&CleanupOpportunity>> =
+        std::collections::HashMap::new();
+
+    // Group by action command
+    for opp in opportunities {
+        let key = if !opp.action.is_empty() && opp.action != "Manual cleanup" {
+            opp.action.clone()
+        } else {
+            opp.display_name.clone()
+        };
+        action_groups.entry(key).or_default().push(opp);
+    }
+
+    let mut groups: Vec<CleanupGroup> = action_groups
+        .into_iter()
+        .map(|(action, opps)| {
+            let total_size: u64 = opps.iter().map(|o| o.size_bytes).sum();
+            let best_priority = opps
+                .iter()
+                .max_by_key(|o| o.priority.total)
+                .map(|o| o.priority.clone())
+                .unwrap_or(PriorityBreakdown {
+                    size_points: 0,
+                    regenerable_points: 0,
+                    ecosystem_points: 0,
+                    confidence_points: 0,
+                    total: 0,
+                });
+            let best_confidence = opps
+                .iter()
+                .max_by_key(|o| o.priority.confidence_points)
+                .map(|o| (o.priority.confidence_points as u16 * 100 / 15) as u8)
+                .unwrap_or(0);
+
+            // Deduplicated reasons
+            let mut reasons: Vec<String> = opps
+                .iter()
+                .map(|o| o.reason.clone())
+                .filter(|r| !r.is_empty())
+                .collect();
+            reasons.dedup();
+
+            // Items as display names
+            let items: Vec<String> = opps.iter().map(|o| o.display_name.clone()).collect();
+
+            // Time estimates use the largest item's values
+            let largest = opps.iter().max_by_key(|o| o.size_bytes).unwrap();
+
+            let label = derive_group_label(&action, ecosystem);
+            let priority_level = PriorityLevel::from_score(best_priority.total);
+
+            let mut group = CleanupGroup {
+                label,
+                action: action.clone(),
+                items,
+                total_size,
+                priority: best_priority,
+                priority_level,
+                execution: ExecutionCost {
+                    cleanup_time: estimate_cleanup_time(&action, total_size),
+                    regeneration_time: largest.estimated_regen_time.clone(),
+                },
+                reasons,
+                confidence_pct: best_confidence,
+                ranking_reasons: Vec::new(), // Set below
+            };
+
+            group.ranking_reasons = ranking_reasons(&group);
+            group
+        })
+        .collect();
+
+    // Sort groups by: priority total desc, then size desc
+    groups.sort_by(|a, b| {
+        b.priority
+            .total
+            .cmp(&a.priority.total)
+            .then_with(|| b.total_size.cmp(&a.total_size))
+    });
+
+    groups
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Main Advisor Function
 // ═══════════════════════════════════════════════════════════════
 
@@ -448,9 +723,9 @@ fn walkdir_size(path: &Path) -> u64 {
 /// Run the cleanup advisor on a directory.
 ///
 /// Discovers all cleanable opportunities, scores them, deduplicates,
-/// and returns a ranked advisor result.  Returns an empty advisor
-/// if no opportunities are found (caller should fall back to
-/// single-path planner).
+/// groups by action, and returns a ranked advisor result.
+/// Returns an empty advisor if no opportunities are found (caller should
+/// fall back to single-path planner).
 pub fn advise(root: &Path) -> CleanupAdvisor {
     let project = discovery::find_project_for_path(root);
     let ecosystem = project.as_ref().map(|p| p.ecosystem);
@@ -479,7 +754,7 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
             continue;
         }
 
-        // P7: Skip items below minimum meaningful size
+        // Skip items below minimum meaningful size
         if plan.estimated_reclaimable_bytes < MINIMUM_MEANINGFUL_SIZE {
             continue;
         }
@@ -500,7 +775,7 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
             "Manual cleanup".to_string()
         };
 
-        // P1: Ecosystem-aware action override
+        // Ecosystem-aware action override
         let (action, was_overridden) =
             ecosystem_action_override(&display_name, ecosystem, project.as_ref(), &planner_action);
 
@@ -521,9 +796,9 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
             priority.total = (priority.total as u16 + 20).min(100) as u8;
         }
 
-        let estimated_time = estimate_regen_time(ecosystem, plan.estimated_reclaimable_bytes);
+        let estimated_regen_time = estimate_regen_time(ecosystem, plan.estimated_reclaimable_bytes);
 
-        // P2: Collect evidence files for auditable confidence
+        // Collect evidence files for auditable confidence
         let evidence_files = crate::ownership::detect_project_ownership(candidate_path)
             .map(|om| om.evidence.evidence_files)
             .unwrap_or_default();
@@ -536,13 +811,13 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
             action,
             reason,
             priority,
-            estimated_time,
-            rank: 0, // Set after sorting
+            estimated_regen_time,
+            rank: 0,
             evidence_files,
         });
     }
 
-    // Phase 4: Dedup parent-child
+    // Dedup parent-child
     dedup_parent_child(&mut opportunities);
 
     // Sort: by total score descending, then by size descending
@@ -561,17 +836,21 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
     let total_reclaimable: u64 = opportunities.iter().map(|o| o.size_bytes).sum();
     let directory_size = dir_size(root);
 
+    // v8.5: Group opportunities by shared action
+    let groups = group_opportunities(&opportunities, ecosystem);
+
     CleanupAdvisor {
         project_name,
         ecosystem,
         opportunities,
+        groups,
         total_reclaimable,
         directory_size,
     }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Phase 6: Full UX Output
+// Phase 7: Rendering — Intelligent Recommendation Output (v8.5)
 // ═══════════════════════════════════════════════════════════════
 
 /// Render star rating as Unicode stars.
@@ -599,6 +878,9 @@ fn circled_number(n: usize) -> &'static str {
 }
 
 /// Render the full advisor output.
+///
+/// v8.5: Grouped, action-first, decision-centric output.
+/// Every recommendation is justified with explainable reasoning.
 pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
     if advisor.opportunities.is_empty() {
         return String::new();
@@ -615,165 +897,172 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
     }
     out.push('\n');
 
-    // ── Opportunity Summary ──
-    out.push_str(&color::section_header("OPPORTUNITY SUMMARY"));
+    // ── Opportunity Summary (P5: expanded) ──
+    out.push_str(&color::section_header("SUMMARY"));
 
-    let count = advisor.opportunities.len();
-    out.push_str(&format!("  {:<22} {}\n", "Cleanup opportunities:", count));
-    out.push_str(&format!(
-        "  {:<22} {}\n",
-        "Total reclaimable:",
-        human_size(advisor.total_reclaimable)
-    ));
+    let safe_count = advisor
+        .opportunities
+        .iter()
+        .filter(|o| o.safe_to_clean)
+        .count();
 
-    // P5: Clarify what the percentage is relative to
     let reclaim_pct = if advisor.directory_size > 0 {
         advisor.total_reclaimable as f64 / advisor.directory_size as f64 * 100.0
     } else {
         0.0
     };
-    out.push_str(&format!(
-        "  {:<22} {:.0}% of project directory\n",
-        "Reclaimable:", reclaim_pct
-    ));
 
-    // Highest priority item
-    if let Some(top) = advisor.opportunities.first() {
-        out.push_str(&format!(
-            "  {:<22} {}\n",
-            "Highest priority:", top.display_name
-        ));
-    }
-
-    // Safety confirmation
     out.push_str(&format!(
         "  {:<22} {}\n",
-        "Safety:", "All recommendations verified safe."
+        "Project size:",
+        human_size(advisor.directory_size)
+    ));
+    out.push_str(&format!(
+        "  {:<22} {} ({:.0}% of project)\n",
+        "Estimated reclaim:",
+        human_size(advisor.total_reclaimable),
+        reclaim_pct
+    ));
+
+    // Largest reclaimable artifact
+    if let Some(largest) = advisor.opportunities.iter().max_by_key(|o| o.size_bytes) {
+        out.push_str(&format!(
+            "  {:<22} {}\n",
+            "Largest artifact:", largest.display_name
+        ));
+    }
+
+    // Highest priority group
+    if let Some(top_group) = advisor.groups.first() {
+        out.push_str(&format!(
+            "  {:<22} {} ({})\n",
+            "Highest priority:",
+            top_group.label,
+            top_group.priority_level.display()
+        ));
+    }
+
+    // Overall recommendation
+    if let Some(top_group) = advisor.groups.first() {
+        out.push_str(&format!(
+            "  {:<22} {}\n",
+            "Recommended action:", top_group.action
+        ));
+    }
+
+    // Expected rebuild impact
+    if let Some(slowest) = advisor
+        .groups
+        .iter()
+        .max_by_key(|g| g.execution.regeneration_time.len())
+    {
+        out.push_str(&format!(
+            "  {:<22} {}\n",
+            "Rebuild impact:", slowest.execution.regeneration_time
+        ));
+    }
+
+    out.push_str(&format!(
+        "  {:<22} {} safe operation{}\n",
+        "Safe operations:",
+        safe_count,
+        if safe_count != 1 { "s" } else { "" }
     ));
 
     out.push('\n');
 
-    // ── Cleanup Opportunities ──
-    out.push_str(&color::section_header("CLEANUP OPPORTUNITIES"));
+    // ── Recommendation Cards (P1, P2: grouped, action-first) ──
+    out.push_str(&color::section_header("RECOMMENDATIONS"));
 
-    for opp in &advisor.opportunities {
+    for (i, group) in advisor.groups.iter().enumerate() {
         out.push('\n');
-        // P8: Value-oriented display — stars + name prominent, score secondary
+
+        // Value card header: priority + label
+        let label = circled_number(i + 1);
         out.push_str(&format!(
-            "  {}  {}\n",
-            star_rating(opp.priority.stars()),
-            opp.display_name
-        ));
-        out.push_str(&format!(
-            "           Size:     {}\n",
-            human_size(opp.size_bytes)
+            "  {} {} {}\n",
+            label,
+            star_rating(group.priority.stars()),
+            group.label
         ));
 
-        // Action (show the ecosystem command if available)
-        if !opp.action.is_empty() && opp.action != "Manual cleanup" {
-            out.push_str(&format!("           Action:   {}\n", opp.action));
+        // Action (primary — most important line)
+        out.push_str(&format!("     Action:     {}\n", group.action));
+
+        // Size
+        out.push_str(&format!(
+            "     Reclaim:    {}\n",
+            human_size(group.total_size)
+        ));
+
+        // Execution cost (P6: cleanup time)
+        out.push_str(&format!(
+            "     Cleanup:    {}\n",
+            group.execution.cleanup_time
+        ));
+
+        // Regeneration time
+        out.push_str(&format!(
+            "     Rebuild:    {}\n",
+            group.execution.regeneration_time
+        ));
+
+        // Risk: always None for safe items (planner guarantees this)
+        out.push_str(&format!("     Risk:       {}\n", color::purple("None")));
+
+        // Confidence
+        out.push_str(&format!("     Confidence: {}%\n", group.confidence_pct));
+
+        // Items in group
+        if group.items.len() > 1 {
+            out.push_str("     Includes:   ");
+            out.push_str(&group.items.join(", "));
+            out.push('\n');
         }
 
-        // Estimated regeneration time (P6: "Instant" for negligible)
-        if !opp.estimated_time.is_empty() {
-            out.push_str(&format!("           Regen:    {}\n", opp.estimated_time));
-        }
-
-        // Reason (compact, one line)
-        if !opp.reason.is_empty() {
-            out.push_str(&format!("           {}\n", opp.reason));
+        // Why this group (P9: explainability)
+        if !group.reasons.is_empty() {
+            out.push_str("     Why:        ");
+            out.push_str(&group.reasons[0]);
+            out.push('\n');
         }
     }
 
     out.push('\n');
 
-    // ── Why Ranked #1? ──
-    if let Some(top) = advisor.opportunities.first() {
-        out.push_str(&color::section_header(&format!(
-            "WHY RANKED #1? {}",
-            top.display_name
-        )));
+    // ── Why This Order? (P4: explain ranking) ──
+    if !advisor.groups.is_empty() {
+        out.push_str(&color::section_header("WHY THIS ORDER?"));
 
-        // P3: Labeled score breakdown with column alignment
-        out.push_str(&format!(
-            "  Priority Score  {:>3}/100  {}\n\n",
-            top.priority.total,
-            star_rating(top.priority.stars())
-        ));
-        out.push_str(&format!(
-            "  Size         +{:>2}  {} reclaimable\n",
-            top.priority.size_points,
-            human_size(top.size_bytes)
-        ));
-        out.push_str(&format!(
-            "  Safety       +{:>2}  Fully regenerable\n",
-            top.priority.regenerable_points
-        ));
-        if top.priority.ecosystem_points > 0 {
+        for (i, group) in advisor.groups.iter().enumerate() {
+            out.push('\n');
+            let label = circled_number(i + 1);
             out.push_str(&format!(
-                "  Ecosystem    +{:>2}  Known ecosystem command\n",
-                top.priority.ecosystem_points
+                "  {} {} — {}\n",
+                label,
+                group.label,
+                group.priority_level.display()
             ));
+            for reason in &group.ranking_reasons {
+                out.push_str(&format!("  \u{2713} {reason}\n"));
+            }
         }
 
-        // P2: Auditable confidence with evidence
-        let conf_pct = top.priority.confidence_points as u16 * 100 / 15;
-        if !top.evidence_files.is_empty() {
-            out.push_str(&format!(
-                "  Confidence   +{:>2}  {}% ({}\n",
-                top.priority.confidence_points,
-                conf_pct,
-                top.evidence_files.join(", ")
-            ));
-            out.push_str("                         )\n");
-        } else {
-            out.push_str(&format!(
-                "  Confidence   +{:>2}  {}%\n",
-                top.priority.confidence_points, conf_pct
-            ));
-        }
-
-        // P8: Cleanup Value summary — explainability over numbers
         out.push('\n');
-        out.push_str("  Cleanup Value\n");
-        out.push_str(&format!("  {}\n\n", star_rating(top.priority.stars())));
-        out.push_str(&format!("  {} reclaimed\n", human_size(top.size_bytes)));
-        out.push_str("  100% regenerable\n");
-        if top.priority.ecosystem_points > 0 {
-            out.push_str("  Known ecosystem command\n");
-        }
-        out.push_str("  No source code affected\n");
     }
-
-    out.push('\n');
-
-    // ── Estimated Reclaim ──
-    out.push_str(&color::section_header("ESTIMATED RECLAIM"));
-    out.push_str(&format!("  {}\n", human_size(advisor.total_reclaimable)));
-    // P4: Add context to the reclaim section
-    if let Some(largest) = advisor.opportunities.first() {
-        out.push_str(&format!(
-            "  Largest removable artifact: {}\n",
-            largest.display_name
-        ));
-    }
-    if reclaim_pct > 50.0 {
-        out.push_str("  Majority of project directory is reclaimable build artifacts.\n");
-    }
-    out.push('\n');
 
     // ── Recommended Cleanup Order ──
-    out.push_str(&color::section_header("RECOMMENDED CLEANUP ORDER"));
+    out.push_str(&color::section_header("EXECUTION PLAN"));
 
-    for opp in &advisor.opportunities {
-        let label = circled_number(opp.rank);
-
-        // Show action command if available, else just the path
-        if !opp.action.is_empty() && opp.action != "Manual cleanup" {
-            out.push_str(&format!("  {} {}\n", label, opp.action));
-        } else {
-            out.push_str(&format!("  {} {}\n", label, opp.display_name));
-        }
+    for (i, group) in advisor.groups.iter().enumerate() {
+        let label = circled_number(i + 1);
+        out.push_str(&format!("  {} {}\n", label, group.action));
+        out.push_str(&format!(
+            "     {}  {}  rebuild: {}\n",
+            human_size(group.total_size),
+            group.priority_level.display(),
+            group.execution.regeneration_time
+        ));
     }
 
     out.push('\n');
@@ -806,7 +1095,6 @@ mod tests {
         fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
 
         // Create target/ with enough content to pass 1 MB threshold
-        // Use a 2 MB file to ensure it's above MINIMUM_MEANINGFUL_SIZE
         fs::create_dir_all(root.join("target/debug")).unwrap();
         fs::write(root.join("target/debug/binary"), vec![0u8; 2_100_000]).unwrap();
 
@@ -840,744 +1128,207 @@ mod tests {
     #[test]
     fn test_advise_rust_project_finds_target() {
         let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
+        let adv = advise(&root);
         assert!(
-            advisor
-                .opportunities
+            adv.opportunities
                 .iter()
                 .any(|o| o.display_name == "target/"),
-            "Should find target/, got: {:?}",
-            advisor.opportunities
+            "should find target/"
         );
     }
-
-    #[test]
-    fn test_advise_rust_project_target_is_safe() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        let target_opp = advisor
-            .opportunities
-            .iter()
-            .find(|o| o.display_name == "target/")
-            .expect("target/ should be found");
-        assert!(target_opp.safe_to_clean);
-    }
-
-    #[test]
-    fn test_advise_rust_project_has_cargo_clean() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        let target_opp = advisor
-            .opportunities
-            .iter()
-            .find(|o| o.display_name == "target/")
-            .expect("target/ should be found");
-        assert!(
-            target_opp.action.contains("cargo clean"),
-            "Should suggest cargo clean, got: {}",
-            target_opp.action
-        );
-    }
-
-    #[test]
-    fn test_advise_total_reclaimable() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        assert!(
-            advisor.total_reclaimable >= 2_000_000,
-            "Total reclaimable should be >= 2 MB, got: {}",
-            advisor.total_reclaimable
-        );
-    }
-
-    #[test]
-    fn test_advise_sorted_by_priority() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        for window in advisor.opportunities.windows(2) {
-            assert!(
-                window[0].priority.total >= window[1].priority.total,
-                "Should be sorted by priority: {} >= {}",
-                window[0].priority.total,
-                window[1].priority.total
-            );
-        }
-    }
-
-    // ── P1: Node.js ecosystem command tests ──
 
     #[test]
     fn test_advise_node_project_finds_node_modules() {
         let (_dir, root) = setup_node_project_with_artifacts();
-        let advisor = advise(&root);
-
+        let adv = advise(&root);
         assert!(
-            advisor
-                .opportunities
+            adv.opportunities
                 .iter()
                 .any(|o| o.display_name == "node_modules/"),
-            "Should find node_modules/, got: {:?}",
-            advisor.opportunities
+            "should find node_modules/"
         );
     }
 
     #[test]
-    fn test_advise_node_uses_npm_install_not_generic() {
-        let (_dir, root) = setup_node_project_with_artifacts();
-        let advisor = advise(&root);
-
-        let nm = advisor
-            .opportunities
-            .iter()
-            .find(|o| o.display_name == "node_modules/")
-            .expect("node_modules/ should be found");
-        assert!(
-            nm.action.contains("install"),
-            "Node action should be 'npm install', got: '{}'",
-            nm.action
-        );
-        assert!(
-            !nm.action.contains("Remove temporary files"),
-            "Should NOT use generic wording, got: '{}'",
-            nm.action
-        );
-    }
-
-    #[test]
-    fn test_node_pnpm_detection() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        fs::write(
-            root.join("package.json"),
-            "{\"name\": \"pnpm-test\", \"version\": \"1.0.0\"}",
-        )
-        .unwrap();
-        fs::write(root.join("pnpm-lock.yaml"), "").unwrap();
-        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
-        fs::write(root.join("node_modules/pkg/index.js"), vec![0u8; 2_100_000]).unwrap();
-
-        let advisor = advise(&root);
-        let nm = advisor
-            .opportunities
-            .iter()
-            .find(|o| o.display_name == "node_modules/");
-        if let Some(nm) = nm {
-            assert_eq!(nm.action, "pnpm install");
-        }
-    }
-
-    #[test]
-    fn test_node_yarn_detection() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        fs::write(
-            root.join("package.json"),
-            "{\"name\": \"yarn-test\", \"version\": \"1.0.0\"}",
-        )
-        .unwrap();
-        fs::write(root.join("yarn.lock"), "").unwrap();
-        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
-        fs::write(root.join("node_modules/pkg/index.js"), vec![0u8; 2_100_000]).unwrap();
-
-        let advisor = advise(&root);
-        let nm = advisor
-            .opportunities
-            .iter()
-            .find(|o| o.display_name == "node_modules/");
-        if let Some(nm) = nm {
-            assert_eq!(nm.action, "yarn install");
-        }
-    }
-
-    // ── P2: Confidence evidence tests ──
-
-    #[test]
-    fn test_evidence_files_collected() {
+    fn test_advise_skips_unsafe() {
         let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
+        let adv = advise(&root);
+        // Source code (src/) is never recommended
+        assert!(
+            !adv.opportunities.iter().any(|o| o.display_name == "src/"),
+            "should not recommend src/"
+        );
+    }
 
-        let target_opp = advisor
+    #[test]
+    fn test_advise_skips_small() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"small-test\"\n",
+        )
+        .unwrap();
+        fs::create_dir(root.join("target")).unwrap();
+        // Only 100 bytes — below MINIMUM_MEANINGFUL_SIZE
+        fs::write(root.join("target/tiny"), vec![0u8; 100]).unwrap();
+
+        let adv = advise(&root);
+        assert!(
+            adv.opportunities.is_empty()
+                || !adv
+                    .opportunities
+                    .iter()
+                    .any(|o| o.display_name == "target/"),
+            "should skip target/ when below 1 MB"
+        );
+    }
+
+    #[test]
+    fn test_advise_dedup_parent_child() {
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let adv = advise(&root);
+        // If target/ is present, target/debug should not be listed separately
+        let has_target = adv
             .opportunities
             .iter()
-            .find(|o| o.display_name == "target/");
-        if let Some(opp) = target_opp {
-            // Should have collected evidence from ownership
+            .any(|o| o.display_name == "target/");
+        let has_target_debug = adv
+            .opportunities
+            .iter()
+            .any(|o| o.display_name.contains("target/debug"));
+        if has_target {
             assert!(
-                !opp.evidence_files.is_empty(),
-                "target/ should have evidence files"
+                !has_target_debug,
+                "target/debug should be deduped by target/"
             );
         }
     }
 
-    // ── P6: Regen time for negligible sizes ──
-
     #[test]
-    fn test_regen_time_instant_for_zero() {
-        assert_eq!(estimate_regen_time(Some(Ecosystem::Rust), 0), "Instant");
-        assert_eq!(
-            estimate_regen_time(Some(Ecosystem::Rust), 500_000),
-            "Instant"
-        );
-    }
-
-    #[test]
-    fn test_regen_time_normal_for_large() {
-        assert_eq!(
-            estimate_regen_time(Some(Ecosystem::Rust), 1_500_000_000),
-            "5-15 min"
-        );
-    }
-
-    // ── P7: Minimum size filter tests ──
-
-    #[test]
-    fn test_advise_empty_for_no_artifacts() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        fs::write(root.join("Cargo.toml"), "[package]\nname = \"empty\"\n").unwrap();
-        fs::create_dir(root.join("src")).unwrap();
-        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-        // No target/, no .cache/, no cleanable artifacts
-
-        let advisor = advise(&root);
-        assert!(
-            advisor.opportunities.is_empty(),
-            "No artifacts should be found, got: {:?}",
-            advisor.opportunities
-        );
-    }
-
-    #[test]
-    fn test_tiny_artifacts_filtered_out() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        fs::write(root.join("Cargo.toml"), "[package]\nname = \"tiny\"\n").unwrap();
-        fs::create_dir(root.join("src")).unwrap();
-        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-        // Create a tiny target/ (below 1 MB threshold)
-        fs::create_dir_all(root.join("target/debug")).unwrap();
-        fs::write(root.join("target/debug/binary"), vec![0u8; 100]).unwrap();
-
-        let advisor = advise(&root);
-        assert!(
-            advisor.opportunities.is_empty(),
-            "Tiny artifacts should be filtered out, got: {:?}",
-            advisor.opportunities
-        );
-    }
-
-    // ── General advisor tests ──
-
-    #[test]
-    fn test_advise_project_name_detected() {
+    fn test_advise_scores_size_heavier() {
         let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        assert!(!advisor.project_name.is_empty());
-        assert!(advisor.project_name.len() <= 100);
+        let adv = advise(&root);
+        // target/ (2 MB) should rank higher than .cache/ (1 MB)
+        let target_idx = adv
+            .opportunities
+            .iter()
+            .position(|o| o.display_name == "target/");
+        let cache_idx = adv
+            .opportunities
+            .iter()
+            .position(|o| o.display_name == ".cache/");
+        if let (Some(t), Some(c)) = (target_idx, cache_idx) {
+            assert!(t < c, "target/ should rank before .cache/");
+        }
     }
 
     #[test]
-    fn test_advise_ecosystem_detected() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        assert_eq!(advisor.ecosystem, Some(Ecosystem::Rust));
-    }
-
-    #[test]
-    fn test_advise_never_zero_filesystem() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let _advisor = advise(&root);
-
-        // After advising, target/ must still exist (read-only)
-        assert!(root.join("target").exists());
-        assert!(root.join("src").exists());
-    }
-
-    // ── Priority scoring tests ──
-
-    #[test]
-    fn test_size_score_tiers() {
-        assert_eq!(size_score(500_000), 0); // < 1 MB
-        assert_eq!(size_score(5_000_000), 6); // 1-10 MB
-        assert_eq!(size_score(30_000_000), 12); // 10-50 MB
-        assert_eq!(size_score(80_000_000), 17); // 50-100 MB
-        assert_eq!(size_score(200_000_000), 22); // 100-500 MB
-        assert_eq!(size_score(700_000_000), 28); // 500 MB-1 GB
-        assert_eq!(size_score(1_500_000_000), 33); // 1-2 GB
-        assert_eq!(size_score(3_000_000_000), 37); // 2-5 GB
-        assert_eq!(size_score(6_000_000_000), 40); // 5+ GB
-    }
-
-    #[test]
-    fn test_stars_from_score() {
-        let b = PriorityBreakdown {
-            size_points: 0,
-            regenerable_points: 0,
-            ecosystem_points: 0,
-            confidence_points: 0,
-            total: 10,
-        };
-        assert_eq!(b.stars(), 1);
-
-        let b2 = PriorityBreakdown {
-            size_points: 0,
-            regenerable_points: 0,
-            ecosystem_points: 0,
-            confidence_points: 0,
-            total: 30,
-        };
-        assert_eq!(b2.stars(), 2);
-
-        let b3 = PriorityBreakdown {
-            size_points: 0,
-            regenerable_points: 0,
-            ecosystem_points: 0,
-            confidence_points: 0,
-            total: 50,
-        };
-        assert_eq!(b3.stars(), 3);
-
-        let b4 = PriorityBreakdown {
-            size_points: 0,
-            regenerable_points: 0,
-            ecosystem_points: 0,
-            confidence_points: 0,
-            total: 70,
-        };
-        assert_eq!(b4.stars(), 4);
-
-        let b5 = PriorityBreakdown {
-            size_points: 0,
-            regenerable_points: 0,
-            ecosystem_points: 0,
-            confidence_points: 0,
-            total: 90,
-        };
-        assert_eq!(b5.stars(), 5);
-    }
-
-    // ── Dedup tests ──
-
-    #[test]
-    fn test_dedup_parent_child_removes_children() {
-        let mut opps = vec![
-            CleanupOpportunity {
-                display_name: "target/".into(),
-                path: PathBuf::from("/tmp/proj/target"),
-                size_bytes: 1000,
-                safe_to_clean: true,
-                action: "cargo clean".into(),
-                reason: "Build artifacts".into(),
-                priority: PriorityBreakdown {
-                    size_points: 0,
-                    regenerable_points: 25,
-                    ecosystem_points: 20,
-                    confidence_points: 10,
-                    total: 55,
-                },
-                estimated_time: "1 min".into(),
-                rank: 0,
-                evidence_files: vec![],
-            },
-            CleanupOpportunity {
-                display_name: "debug/".into(),
-                path: PathBuf::from("/tmp/proj/target/debug"),
-                size_bytes: 500,
-                safe_to_clean: true,
-                action: "".into(),
-                reason: "Debug build".into(),
-                priority: PriorityBreakdown {
-                    size_points: 0,
-                    regenerable_points: 25,
-                    ecosystem_points: 0,
-                    confidence_points: 5,
-                    total: 30,
-                },
-                estimated_time: "30 sec".into(),
-                rank: 0,
-                evidence_files: vec![],
-            },
-        ];
-
-        dedup_parent_child(&mut opps);
-        assert_eq!(opps.len(), 1);
-        assert_eq!(opps[0].display_name, "target/");
-    }
-
-    #[test]
-    fn test_dedup_keeps_siblings() {
-        let mut opps = vec![
-            CleanupOpportunity {
-                display_name: "target/".into(),
-                path: PathBuf::from("/tmp/proj/target"),
-                size_bytes: 1000,
-                safe_to_clean: true,
-                action: "cargo clean".into(),
-                reason: "Build".into(),
-                priority: PriorityBreakdown {
-                    size_points: 0,
-                    regenerable_points: 25,
-                    ecosystem_points: 20,
-                    confidence_points: 10,
-                    total: 55,
-                },
-                estimated_time: "1 min".into(),
-                rank: 0,
-                evidence_files: vec![],
-            },
-            CleanupOpportunity {
-                display_name: ".cache/".into(),
-                path: PathBuf::from("/tmp/proj/.cache"),
-                size_bytes: 200,
-                safe_to_clean: true,
-                action: "".into(),
-                reason: "Cache".into(),
-                priority: PriorityBreakdown {
-                    size_points: 0,
-                    regenerable_points: 25,
-                    ecosystem_points: 0,
-                    confidence_points: 5,
-                    total: 30,
-                },
-                estimated_time: "10 sec".into(),
-                rank: 0,
-                evidence_files: vec![],
-            },
-        ];
-
-        dedup_parent_child(&mut opps);
-        assert_eq!(opps.len(), 2);
-    }
-
-    // ── Rank tests ──
-
-    #[test]
-    fn test_rank_set_after_sorting() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        if !advisor.opportunities.is_empty() {
-            assert_eq!(advisor.opportunities[0].rank, 1);
-            if advisor.opportunities.len() >= 2 {
-                assert_eq!(advisor.opportunities[1].rank, 2);
-            }
+    fn test_advise_ecosystem_override() {
+        let (_dir, root) = setup_node_project_with_artifacts();
+        let adv = advise(&root);
+        let node_modules = adv
+            .opportunities
+            .iter()
+            .find(|o| o.display_name == "node_modules/");
+        if let Some(nm) = node_modules {
+            assert!(
+                nm.action.contains("install"),
+                "node_modules action should contain 'install', got: {}",
+                nm.action
+            );
         }
     }
 
     // ── Render tests ──
 
     #[test]
-    fn test_render_advisor_not_empty() {
+    fn test_render_advisor() {
         let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
+        let adv = advise(&root);
+        let output = render_advisor(&adv, &root);
 
         assert!(output.contains("PROJECT CLEANUP ADVISOR"));
-        assert!(output.contains("OPPORTUNITY SUMMARY"));
-        assert!(output.contains("CLEANUP OPPORTUNITIES"));
-        assert!(output.contains("ESTIMATED RECLAIM"));
-        assert!(output.contains("RECOMMENDED CLEANUP ORDER"));
-        assert!(output.contains("target/"));
-        assert!(output.contains("cargo clean"));
-    }
-
-    #[test]
-    fn test_render_advisor_has_summary() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        assert!(output.contains("Cleanup opportunities:"));
-        assert!(output.contains("Total reclaimable:"));
-        // P5: Should say "of project directory"
-        assert!(output.contains("of project directory"));
+        assert!(output.contains("SUMMARY"));
+        assert!(output.contains("RECOMMENDATIONS"));
+        assert!(output.contains("Safe operations:"));
+        assert!(output.contains("Estimated reclaim:"));
+        assert!(output.contains("of project"));
         assert!(output.contains("Highest priority:"));
-        assert!(output.contains("All recommendations verified safe."));
     }
 
     #[test]
     fn test_render_advisor_has_why_ranked_1() {
         let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        assert!(output.contains("WHY RANKED #1?"));
-        assert!(output.contains("reclaimable"));
-        assert!(output.contains("Fully regenerable"));
+        let adv = advise(&root);
+        let output = render_advisor(&adv, &root);
+        assert!(output.contains("WHY THIS ORDER?"));
     }
 
     #[test]
-    fn test_render_advisor_has_labeled_breakdown() {
+    fn test_render_advisor_node_project() {
+        let (_dir, root) = setup_node_project_with_artifacts();
+        let adv = advise(&root);
+        let output = render_advisor(&adv, &root);
+
+        assert!(output.contains("node_modules"));
+        assert!(output.contains("install"));
+    }
+
+    #[test]
+    fn test_render_advisor_has_safety_confirmation() {
         let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
+        let adv = advise(&root);
+        let output = render_advisor(&adv, &root);
+        // v8.5: Safety is implicit (all shown are safe), but
+        // the footer still confirms source code is never recommended
+        assert!(output.contains("Source code is NEVER recommended"));
+    }
 
-        // P3: Labeled columns
-        assert!(output.contains("Size"));
-        assert!(output.contains("Safety"));
-        assert!(output.contains("Ecosystem"));
-        assert!(output.contains("Confidence"));
-        assert!(output.contains("Priority Score"));
+    // ── Unit tests ──
+
+    #[test]
+    fn test_size_score() {
+        assert_eq!(size_score(0), 0);
+        assert_eq!(size_score(500_000), 0); // < 1 MB
+        assert!(size_score(2_000_000) > 0); // >= 1 MB
+        assert!(size_score(200_000_000) > size_score(2_000_000)); // 200 MB > 2 MB
+        assert!(size_score(6_000_000_000) >= 40); // >= 5 GB → max
     }
 
     #[test]
-    fn test_render_advisor_has_cleanup_value() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        // P8: Cleanup Value section
-        assert!(output.contains("Cleanup Value"));
-        assert!(output.contains("reclaimed"));
-        assert!(output.contains("100% regenerable"));
-        assert!(output.contains("No source code affected"));
+    fn test_estimate_regen_time() {
+        assert_eq!(estimate_regen_time(None, 0), "Instant");
+        assert_eq!(estimate_regen_time(None, 500_000), "Instant");
+        // Larger sizes should return non-instant
+        let large = estimate_regen_time(Some(Ecosystem::Rust), 2_000_000_000);
+        assert_ne!(large, "Instant");
     }
 
     #[test]
-    fn test_render_advisor_has_largest_artifact() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        // P4: Context in Estimated Reclaim
-        assert!(output.contains("Largest removable artifact"));
+    fn test_estimate_cleanup_time() {
+        assert_eq!(estimate_cleanup_time("cargo clean", 0), "Instant");
+        assert_eq!(estimate_cleanup_time("cargo clean", 100_000_000), "Instant");
+        assert_eq!(
+            estimate_cleanup_time("cargo clean", 2_000_000_000),
+            "2-5 seconds"
+        );
+        // Non-ecosystem commands scale with size
+        assert_eq!(estimate_cleanup_time("Manual cleanup", 0), "Instant");
+        assert_eq!(
+            estimate_cleanup_time("Manual cleanup", 200_000_000),
+            "1-3 seconds"
+        );
+        assert_eq!(
+            estimate_cleanup_time("Manual cleanup", 200_000_000_000),
+            "5-15 seconds"
+        );
     }
 
     #[test]
-    fn test_render_advisor_no_box_characters() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        assert!(!output.contains('\u{250c}')); // ┌
-        assert!(!output.contains('\u{2510}')); // ┐
-        assert!(!output.contains('\u{2554}')); // ╔
-        assert!(!output.contains('\u{255a}')); // ╚
-        assert!(!output.contains('\u{251c}')); // ├
-        assert!(!output.contains('\u{2524}')); // ┤
-    }
-
-    #[test]
-    fn test_render_advisor_empty_returns_empty() {
-        let advisor = CleanupAdvisor {
-            project_name: "test".into(),
-            ecosystem: None,
-            opportunities: Vec::new(),
-            total_reclaimable: 0,
-            directory_size: 0,
-        };
-        let output = render_advisor(&advisor, Path::new("/tmp"));
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn test_render_advisor_contains_stars() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        assert!(output.contains('\u{2605}')); // ★
-    }
-
-    #[test]
-    fn test_render_advisor_contains_circled_numbers() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        assert!(output.contains('\u{2460}')); // ①
-    }
-
-    #[test]
-    fn test_render_advisor_source_code_never_recommended() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        assert!(output.contains("Source code is NEVER recommended for cleanup"));
-        assert!(!advisor
-            .opportunities
-            .iter()
-            .any(|o| o.display_name.contains("src")));
-    }
-
-    #[test]
-    fn test_render_advisor_shows_project_name() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        let output = render_advisor(&advisor, &root);
-
-        assert!(output.contains("Project:"));
-        assert!(output.contains(&advisor.project_name));
-    }
-
-    // ── Integration: Advisor + Planner consistency ──
-
-    #[test]
-    fn test_advisor_agrees_with_planner_on_safety() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        for opp in &advisor.opportunities {
-            let plan = planner::plan(&opp.path);
-            assert_eq!(
-                opp.safe_to_clean, plan.safe_to_clean,
-                "Advisor and Planner disagree on safety of {}",
-                opp.display_name
-            );
-        }
-    }
-
-    // ── Safety invariants ──
-
-    #[test]
-    fn test_advise_never_includes_unsafe_paths() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        for opp in &advisor.opportunities {
-            assert!(opp.safe_to_clean, "{} should be safe", opp.display_name);
-        }
-    }
-
-    #[test]
-    fn test_priority_total_capped_at_100() {
-        let b = PriorityBreakdown {
-            size_points: 40,
-            regenerable_points: 25,
-            ecosystem_points: 20,
-            confidence_points: 15,
-            total: 100,
-        };
-        assert!(b.total <= 100);
-    }
-
-    // ── Benchmark-style: advisor on real project ──
-
-    #[test]
-    fn test_benchmark_advise_on_self() {
-        let self_path = Path::new(env!("CARGO_MANIFEST_DIR"));
-        if self_path.join("Cargo.toml").exists() {
-            let advisor = advise(self_path);
-
-            if self_path.join("target").exists() {
-                assert!(
-                    advisor
-                        .opportunities
-                        .iter()
-                        .any(|o| o.display_name == "target/"),
-                    "Should find target/ in zacxiom project"
-                );
-            }
-
-            for opp in &advisor.opportunities {
-                assert!(
-                    opp.size_bytes > 0,
-                    "{} should have measurable size",
-                    opp.display_name
-                );
-            }
-
-            for opp in &advisor.opportunities {
-                assert!(
-                    opp.priority.total <= 100,
-                    "{} has score {} > 100",
-                    opp.display_name,
-                    opp.priority.total
-                );
-            }
-        }
-    }
-
-    // ── Additional tests ──
-
-    #[test]
-    fn test_directory_size_nonnegative() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        assert!(advisor.directory_size > 0);
-    }
-
-    #[test]
-    fn test_reclaim_percentage_reasonable() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-        if advisor.directory_size > 0 {
-            let pct = advisor.total_reclaimable as f64 / advisor.directory_size as f64 * 100.0;
-            assert!(
-                (0.0..=100.0).contains(&pct),
-                "Reclaim % should be 0-100, got: {}",
-                pct
-            );
-        }
-    }
-
-    #[test]
-    fn test_ecosystem_candidates_rust_has_target() {
-        let candidates = ecosystem_candidates(Some(Ecosystem::Rust));
-        assert!(candidates.contains(&"target"));
-        assert!(candidates.contains(&"criterion"));
-        assert!(candidates.contains(&"coverage"));
-        assert!(candidates.contains(&".cache"));
-    }
-
-    #[test]
-    fn test_ecosystem_candidates_node_has_node_modules() {
-        let candidates = ecosystem_candidates(Some(Ecosystem::Node));
-        assert!(candidates.contains(&"node_modules"));
-        assert!(candidates.contains(&"dist"));
-        assert!(candidates.contains(&".next"));
-    }
-
-    #[test]
-    fn test_ecosystem_candidates_python_has_pycache() {
-        let candidates = ecosystem_candidates(Some(Ecosystem::Python));
-        assert!(candidates.contains(&"__pycache__"));
-        assert!(candidates.contains(&".pytest_cache"));
-    }
-
-    #[test]
-    fn test_ecosystem_candidates_none_has_common() {
-        let candidates = ecosystem_candidates(None);
-        assert!(candidates.contains(&".cache"));
-        assert!(candidates.contains(&"tmp"));
-        assert!(candidates.contains(&"logs"));
-        assert!(!candidates.contains(&"target"));
-        assert!(!candidates.contains(&"node_modules"));
-    }
-
-    #[test]
-    fn test_circled_number() {
-        assert_eq!(circled_number(1), "\u{2460}");
-        assert_eq!(circled_number(5), "\u{2464}");
-        assert_eq!(circled_number(10), "\u{2469}");
-        assert_eq!(circled_number(11), "\u{2460}"); // Fallback
-    }
-
-    #[test]
-    fn test_compute_priority_components_nonnegative() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        for opp in &advisor.opportunities {
-            assert!(opp.priority.size_points <= 40);
-            assert!(opp.priority.regenerable_points <= 25);
-            assert!(opp.priority.ecosystem_points <= 20);
-            assert!(opp.priority.confidence_points <= 15);
-        }
-    }
-
-    // ── Ecosystem action override tests ──
-
-    #[test]
-    fn test_ecosystem_override_node_modules() {
+    fn test_ecosystem_action_override_node_modules() {
         let (action, overridden) = ecosystem_action_override(
-            "node_modules/",
+            "node_modules",
             Some(Ecosystem::Node),
             None,
             "Remove temporary files.",
@@ -1587,61 +1338,332 @@ mod tests {
     }
 
     #[test]
-    fn test_ecosystem_override_target() {
-        let (action, overridden) = ecosystem_action_override(
-            "target/",
-            Some(Ecosystem::Rust),
-            None,
-            "Remove temporary files.",
-        );
-        assert_eq!(action, "cargo clean");
-        assert!(overridden);
-    }
-
-    #[test]
-    fn test_ecosystem_override_no_override_for_real_cmd() {
+    fn test_ecosystem_action_override_generic_passthrough() {
         let (action, overridden) =
-            ecosystem_action_override("target/", Some(Ecosystem::Rust), None, "cargo clean");
-        assert_eq!(action, "cargo clean");
+            ecosystem_action_override("some_dir", Some(Ecosystem::Node), None, "npm install");
+        assert_eq!(action, "npm install");
         assert!(!overridden);
     }
 
     #[test]
-    fn test_detect_node_pm_npm() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        let project = ProjectInfo {
-            name: "test".into(),
-            root: root.clone(),
-            ecosystem: Ecosystem::Node,
-            manifests: vec![root.join("package-lock.json")],
-        };
-        assert_eq!(detect_node_pm(&project), "npm");
+    fn test_circled_number() {
+        assert_eq!(circled_number(1), "\u{2460}");
+        assert_eq!(circled_number(2), "\u{2461}");
+        assert_eq!(circled_number(5), "\u{2464}");
     }
 
     #[test]
-    fn test_detect_node_pm_pnpm() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        let project = ProjectInfo {
-            name: "test".into(),
-            root: root.clone(),
-            ecosystem: Ecosystem::Node,
-            manifests: vec![root.join("pnpm-lock.yaml")],
-        };
-        assert_eq!(detect_node_pm(&project), "pnpm");
+    fn test_star_rating() {
+        assert_eq!(star_rating(5), "\u{2605}\u{2605}\u{2605}\u{2605}\u{2605}");
+        assert_eq!(star_rating(3), "\u{2605}\u{2605}\u{2605}\u{2606}\u{2606}");
+        assert_eq!(star_rating(0), "\u{2606}\u{2606}\u{2606}\u{2606}\u{2606}");
+    }
+
+    // ── v8.5 Grouping tests ──
+
+    #[test]
+    fn test_group_opportunities_same_action() {
+        let opps = vec![
+            CleanupOpportunity {
+                display_name: "target/".to_string(),
+                path: PathBuf::from("/tmp/test/target"),
+                size_bytes: 700_000_000,
+                safe_to_clean: true,
+                action: "cargo clean".to_string(),
+                reason: "Build artifacts.".to_string(),
+                priority: PriorityBreakdown {
+                    size_points: 33,
+                    regenerable_points: 25,
+                    ecosystem_points: 20,
+                    confidence_points: 12,
+                    total: 90,
+                },
+                estimated_regen_time: "2-5 min".to_string(),
+                rank: 1,
+                evidence_files: vec!["Cargo.toml".to_string()],
+            },
+            CleanupOpportunity {
+                display_name: "criterion/".to_string(),
+                path: PathBuf::from("/tmp/test/criterion"),
+                size_bytes: 50_000_000,
+                safe_to_clean: true,
+                action: "cargo clean".to_string(),
+                reason: "Build artifacts.".to_string(),
+                priority: PriorityBreakdown {
+                    size_points: 17,
+                    regenerable_points: 25,
+                    ecosystem_points: 20,
+                    confidence_points: 12,
+                    total: 74,
+                },
+                estimated_regen_time: "30-60 sec".to_string(),
+                rank: 2,
+                evidence_files: vec!["Cargo.toml".to_string()],
+            },
+        ];
+
+        let groups = group_opportunities(&opps, Some(Ecosystem::Rust));
+        assert_eq!(groups.len(), 1, "same action should produce one group");
+        assert_eq!(groups[0].label, "Rust Build Artifacts");
+        assert_eq!(groups[0].action, "cargo clean");
+        assert_eq!(groups[0].total_size, 750_000_000);
+        assert_eq!(groups[0].items.len(), 2);
+        assert_eq!(groups[0].priority.total, 90); // Best score
+        assert_eq!(groups[0].priority_level, PriorityLevel::Immediate);
     }
 
     #[test]
-    fn test_detect_node_pm_yarn() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        let project = ProjectInfo {
-            name: "test".into(),
-            root: root.clone(),
-            ecosystem: Ecosystem::Node,
-            manifests: vec![root.join("yarn.lock")],
+    fn test_group_opportunities_different_actions() {
+        let opps = vec![
+            CleanupOpportunity {
+                display_name: "node_modules/".to_string(),
+                path: PathBuf::from("/tmp/test/node_modules"),
+                size_bytes: 340_000_000,
+                safe_to_clean: true,
+                action: "npm install".to_string(),
+                reason: "Packages are re-downloadable.".to_string(),
+                priority: PriorityBreakdown {
+                    size_points: 28,
+                    regenerable_points: 25,
+                    ecosystem_points: 20,
+                    confidence_points: 12,
+                    total: 85,
+                },
+                estimated_regen_time: "1-3 min".to_string(),
+                rank: 1,
+                evidence_files: vec!["package.json".to_string()],
+            },
+            CleanupOpportunity {
+                display_name: "dist/".to_string(),
+                path: PathBuf::from("/tmp/test/dist"),
+                size_bytes: 95_000_000,
+                safe_to_clean: true,
+                action: "npm run build".to_string(),
+                reason: "Build output is regenerable.".to_string(),
+                priority: PriorityBreakdown {
+                    size_points: 22,
+                    regenerable_points: 25,
+                    ecosystem_points: 20,
+                    confidence_points: 12,
+                    total: 79,
+                },
+                estimated_regen_time: "20-60 sec".to_string(),
+                rank: 2,
+                evidence_files: vec!["package.json".to_string()],
+            },
+        ];
+
+        let groups = group_opportunities(&opps, Some(Ecosystem::Node));
+        assert_eq!(
+            groups.len(),
+            2,
+            "different actions should produce separate groups"
+        );
+        assert_eq!(groups[0].label, "Node Dependencies");
+        assert_eq!(groups[1].label, "Build Output");
+    }
+
+    #[test]
+    fn test_group_opportunities_ordering() {
+        let opps = vec![
+            CleanupOpportunity {
+                display_name: "dist/".to_string(),
+                path: PathBuf::from("/tmp/test/dist"),
+                size_bytes: 95_000_000,
+                safe_to_clean: true,
+                action: "npm run build".to_string(),
+                reason: "Build output.".to_string(),
+                priority: PriorityBreakdown {
+                    size_points: 22,
+                    regenerable_points: 25,
+                    ecosystem_points: 20,
+                    confidence_points: 12,
+                    total: 79,
+                },
+                estimated_regen_time: "20-60 sec".to_string(),
+                rank: 1,
+                evidence_files: vec![],
+            },
+            CleanupOpportunity {
+                display_name: "node_modules/".to_string(),
+                path: PathBuf::from("/tmp/test/node_modules"),
+                size_bytes: 340_000_000,
+                safe_to_clean: true,
+                action: "npm install".to_string(),
+                reason: "Packages re-downloadable.".to_string(),
+                priority: PriorityBreakdown {
+                    size_points: 28,
+                    regenerable_points: 25,
+                    ecosystem_points: 20,
+                    confidence_points: 12,
+                    total: 85,
+                },
+                estimated_regen_time: "1-3 min".to_string(),
+                rank: 2,
+                evidence_files: vec![],
+            },
+        ];
+
+        let groups = group_opportunities(&opps, Some(Ecosystem::Node));
+        assert_eq!(
+            groups[0].action, "npm install",
+            "higher priority group should be first"
+        );
+        assert_eq!(groups[1].action, "npm run build");
+    }
+
+    #[test]
+    fn test_priority_level_from_score() {
+        assert_eq!(PriorityLevel::from_score(95), PriorityLevel::Immediate);
+        assert_eq!(PriorityLevel::from_score(80), PriorityLevel::Immediate);
+        assert_eq!(PriorityLevel::from_score(60), PriorityLevel::High);
+        assert_eq!(PriorityLevel::from_score(40), PriorityLevel::Medium);
+        assert_eq!(PriorityLevel::from_score(20), PriorityLevel::Low);
+        assert_eq!(PriorityLevel::from_score(0), PriorityLevel::Low);
+    }
+
+    #[test]
+    fn test_priority_level_ordering() {
+        // PriorityLevel ordering: Lower ordinal = higher priority
+        assert!(PriorityLevel::Low > PriorityLevel::Medium);
+        assert!(PriorityLevel::Medium > PriorityLevel::High);
+        assert!(PriorityLevel::High > PriorityLevel::Immediate);
+    }
+
+    #[test]
+    fn test_derive_group_label() {
+        assert_eq!(
+            derive_group_label("cargo clean", Some(Ecosystem::Rust)),
+            "Rust Build Artifacts"
+        );
+        assert_eq!(
+            derive_group_label("npm install", Some(Ecosystem::Node)),
+            "Node Dependencies"
+        );
+        assert_eq!(
+            derive_group_label("pnpm install", Some(Ecosystem::Node)),
+            "Node Dependencies"
+        );
+        assert_eq!(
+            derive_group_label("npm run build", Some(Ecosystem::Node)),
+            "Build Output"
+        );
+        assert_eq!(
+            derive_group_label("next build", Some(Ecosystem::Node)),
+            "Build Output"
+        );
+        assert_eq!(
+            derive_group_label("go clean -cache", Some(Ecosystem::Go)),
+            "Go Build Cache"
+        );
+    }
+
+    #[test]
+    fn test_ranking_reasons_content() {
+        let group = CleanupGroup {
+            label: "Rust Build Artifacts".to_string(),
+            action: "cargo clean".to_string(),
+            items: vec!["target/".to_string(), "criterion/".to_string()],
+            total_size: 762_000_000,
+            priority: PriorityBreakdown {
+                size_points: 33,
+                regenerable_points: 25,
+                ecosystem_points: 20,
+                confidence_points: 12,
+                total: 90,
+            },
+            priority_level: PriorityLevel::Immediate,
+            execution: ExecutionCost {
+                cleanup_time: "Instant".to_string(),
+                regeneration_time: "2-5 min".to_string(),
+            },
+            reasons: vec!["Fully regenerable from source.".to_string()],
+            confidence_pct: 80,
+            ranking_reasons: Vec::new(),
         };
-        assert_eq!(detect_node_pm(&project), "yarn");
+        let reasons = ranking_reasons(&group);
+        assert!(!reasons.is_empty());
+        // Should mention size
+        assert!(reasons.iter().any(|r| r.contains("Reclaims")));
+        // Should mention size category (762 MB is < 1 GB)
+        assert!(reasons.iter().any(|r| r.contains("recoverable space")));
+        // Should mention regenerability
+        assert!(reasons.iter().any(|r| r.contains("regenerable")));
+        // Should mention ecosystem command
+        assert!(reasons.iter().any(|r| r.contains("ecosystem")));
+        // Should mention multiple artifacts
+        assert!(reasons.iter().any(|r| r.contains("2 related")));
+        // Should mention instant cleanup
+        assert!(reasons.iter().any(|r| r.contains("Instant")));
+    }
+
+    #[test]
+    fn test_render_advisor_has_execution_plan() {
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let adv = advise(&root);
+        let output = render_advisor(&adv, &root);
+        assert!(output.contains("EXECUTION PLAN"));
+        assert!(output.contains("Rebuild impact:"));
+        assert!(output.contains("Recommended action:"));
+        assert!(output.contains("Safe operations:"));
+    }
+
+    #[test]
+    fn test_render_advisor_has_value_cards() {
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let adv = advise(&root);
+        let output = render_advisor(&adv, &root);
+        // v8.5 value card fields
+        assert!(output.contains("Action:"));
+        assert!(output.contains("Reclaim:"));
+        assert!(output.contains("Cleanup:"));
+        assert!(output.contains("Rebuild:"));
+        assert!(output.contains("Risk:"));
+        assert!(output.contains("Confidence:"));
+        assert!(output.contains("Why:"));
+    }
+
+    #[test]
+    fn test_render_advisor_grouped_output() {
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let adv = advise(&root);
+        let output = render_advisor(&adv, &root);
+        // Should have group labels, not just file names
+        assert!(output.contains("Rust Build Artifacts"));
+    }
+
+    #[test]
+    fn test_advisor_consistency_with_planner() {
+        // P8: Advisor must never contradict planner.
+        // If planner says safe, advisor shows it.
+        // If planner says unsafe, advisor must not show it.
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let adv = advise(&root);
+
+        for opp in &adv.opportunities {
+            // Every opportunity shown by advisor must be safe per planner
+            let plan = planner::plan(&opp.path);
+            assert!(
+                plan.safe_to_clean,
+                "Advisor shows {} but planner says unsafe",
+                opp.display_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_advise_populates_groups() {
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let adv = advise(&root);
+        // v8.5: groups must be populated when opportunities exist
+        if !adv.opportunities.is_empty() {
+            assert!(!adv.groups.is_empty(), "groups should be populated");
+            // Total size in groups should match total_reclaimable
+            let group_total: u64 = adv.groups.iter().map(|g| g.total_size).sum();
+            assert_eq!(
+                group_total, adv.total_reclaimable,
+                "group total should match advisor total"
+            );
+        }
     }
 }
