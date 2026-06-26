@@ -455,3 +455,94 @@ pub(crate) fn build_ecosystem_recommendation(
         Vec::new(),
     )
 }
+
+/// Estimate rebuild cost time using ecosystem knowledge.
+///
+/// Returns a human-readable duration estimate based on ecosystem type and
+/// typical rebuild speeds observed on modern hardware (2024+).
+///
+/// v8.6: New — deterministic rebuild cost estimation for execution ordering.
+pub(crate) fn estimate_rebuild_cost(
+    ecosystem: Option<Ecosystem>,
+    size_bytes: u64,
+    category: Category,
+) -> (String, u8) {
+    // u8 score: lower = cheaper (0 = instant, 10 = hours+)
+
+    if size_bytes == 0 {
+        return ("Instant".into(), 0);
+    }
+
+    let size_mb = size_bytes as f64 / 1_048_576.0;
+    let size_gb = size_bytes as f64 / 1_073_741_824.0;
+
+    match category {
+        Category::BuildCache | Category::TemporaryFile | Category::GeneratedContent => {
+            match ecosystem {
+                Some(Ecosystem::Rust) => {
+                    if size_gb > 1.0 {
+                        (format!("~{:.0}m (cargo build)", size_gb * 2.0), 6)
+                    } else if size_mb > 100.0 {
+                        (format!("~{:.0}m (cargo build)", size_mb * 0.02), 4)
+                    } else {
+                        ("<1m (cargo build)".into(), 2)
+                    }
+                }
+                Some(Ecosystem::Node) => {
+                    if size_gb > 0.5 {
+                        (format!("~{:.0}m (npm install && build)", size_gb * 3.0), 5)
+                    } else if size_mb > 100.0 {
+                        ("~1-3m (npm install)".into(), 3)
+                    } else {
+                        ("<1m (npm install)".into(), 2)
+                    }
+                }
+                Some(Ecosystem::Python) => {
+                    if size_gb > 0.5 {
+                        ("~2-5m (pip install)".into(), 4)
+                    } else {
+                        ("<1m (pip install)".into(), 2)
+                    }
+                }
+                Some(Ecosystem::Go) => {
+                    if size_gb > 0.5 {
+                        (format!("~{:.0}m (go build)", size_gb * 1.5), 5)
+                    } else {
+                        ("<1m (go build)".into(), 2)
+                    }
+                }
+                _ => {
+                    if size_gb > 1.0 {
+                        (format!("~{:.0}m (rebuild)", size_gb * 5.0), 7)
+                    } else if size_mb > 100.0 {
+                        (format!("~{:.0}m (rebuild)", size_mb * 0.05), 5)
+                    } else {
+                        ("<1m (rebuild)".into(), 2)
+                    }
+                }
+            }
+        }
+        Category::Cache
+        | Category::BrowserCache
+        | Category::CacheRegistry
+        | Category::AIModelCache => ("Instant (auto-regenerated)".into(), 0),
+        Category::DependencySource | Category::DownloadedArtifact => {
+            if size_gb > 1.0 {
+                (format!("~{:.0}m (re-download)", size_gb * 4.0), 6)
+            } else {
+                (format!("~{:.0}s (re-download)", size_mb * 0.5), 3)
+            }
+        }
+        Category::ToolchainManager | Category::ToolchainInstallation => (
+            format!("~{:.0}m (reinstall toolchain)", size_gb.max(1.0) * 10.0),
+            8,
+        ),
+        _ => {
+            if size_gb > 1.0 {
+                (format!("~{:.0}m", size_gb * 5.0), 7)
+            } else {
+                (format!("~{:.0}s", size_mb * 2.0), 4)
+            }
+        }
+    }
+}

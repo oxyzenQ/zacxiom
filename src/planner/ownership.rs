@@ -2,13 +2,32 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! Cleanup Planner — Ownership detection, risk scoring, and size computation.
+//!
+//! v8.6: Improved reclaim estimation with metadata caching and fast-path heuristics.
 
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 use crate::discovery;
 use crate::engine::{types::RiskLevel, Category, ClassificationResult};
 use crate::impact;
+
+/// Cache for directory size computations.
+/// Keyed by canonical path, valid for 60 seconds.
+static SIZE_CACHE: std::sync::LazyLock<Mutex<HashMap<PathBuf, (SystemTime, u64)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+const CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Invalidate the size cache (useful for testing).
+pub(crate) fn invalidate_size_cache() {
+    if let Ok(mut cache) = SIZE_CACHE.lock() {
+        cache.clear();
+    }
+}
 
 /// Boost confidence when project ownership is discovered.
 pub(crate) fn boost_confidence_from_discovery(eng: &mut ClassificationResult) {
@@ -65,26 +84,73 @@ pub(crate) fn compute_risk(
 }
 
 /// Compute the estimated size of a path in bytes.
+///
+/// v8.6: Uses metadata caching to avoid redundant directory walks.
 pub(crate) fn compute_size(path: &Path) -> u64 {
     if !path.exists() {
         return 0;
     }
 
+    // Fast-path: single file
     if path.is_file() {
-        return fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        return fs::symlink_metadata(path).map(|m| m.len()).unwrap_or(0);
     }
 
-    // Directory — walk and sum file sizes (read-only, no mutation)
+    // Check cache
+    if let Ok(canonical) = path.canonicalize() {
+        if let Ok(cache) = SIZE_CACHE.lock() {
+            if let Some((ts, size)) = cache.get(&canonical) {
+                if ts.elapsed().unwrap_or(Duration::MAX) < CACHE_TTL {
+                    return *size;
+                }
+            }
+        }
+    }
+
+    let size = walk_dir_size(path);
+
+    // Update cache
+    if let Ok(canonical) = path.canonicalize() {
+        if let Ok(mut cache) = SIZE_CACHE.lock() {
+            cache.insert(canonical, (SystemTime::now(), size));
+        }
+    }
+
+    size
+}
+
+/// Recursive directory walk for accurate size computation.
+fn walk_dir_size(path: &Path) -> u64 {
     let mut total: u64 = 0;
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let entrypath = entry.path();
             if entrypath.is_file() {
-                total += fs::metadata(&entrypath).map(|m| m.len()).unwrap_or(0);
+                total += fs::symlink_metadata(&entrypath)
+                    .map(|m| m.len())
+                    .unwrap_or(0);
             } else if entrypath.is_dir() {
-                total += compute_size(&entrypath);
+                total += walk_dir_size(&entrypath);
             }
         }
     }
     total
+}
+
+/// Estimate reclaimable bytes using fast path when possible.
+/// Returns the estimate and a confidence flag (true = accurate, false = approximate).
+pub(crate) fn estimate_reclaim_fast(path: &Path) -> (u64, bool) {
+    if !path.exists() {
+        return (0, true);
+    }
+
+    if path.is_file() {
+        return (
+            fs::symlink_metadata(path).map(|m| m.len()).unwrap_or(0),
+            true,
+        );
+    }
+
+    // For directories, always do an accurate walk (with caching)
+    (compute_size(path), true)
 }
