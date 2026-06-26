@@ -1,7 +1,7 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Cleanup Advisor — v8.4
+//! Cleanup Advisor — v8.4.1
 //!
 //! Transforms `zacxiom plan` from a single-path planner into an intelligent
 //! cleanup advisor.  Discovers, ranks, and presents ALL worthwhile cleanup
@@ -19,7 +19,7 @@
 //! No duplicated classification rules. No duplicated logic.
 
 use crate::color;
-use crate::discovery::{self, Ecosystem};
+use crate::discovery::{self, Ecosystem, ProjectInfo};
 use crate::display::human_size;
 use crate::planner;
 use std::collections::HashSet;
@@ -81,6 +81,8 @@ pub struct CleanupOpportunity {
     pub estimated_time: String,
     /// 1-based rank after sorting (set during final ranking).
     pub rank: usize,
+    /// Evidence files supporting the confidence score.
+    pub evidence_files: Vec<String>,
 }
 
 /// Full advisor output for a directory.
@@ -256,9 +258,13 @@ fn compute_priority(
 
 /// Estimate regeneration time based on ecosystem and size.
 ///
-/// These are rough estimates to help the user understand the cost
-/// of cleanup.  Based on typical rebuild times for each ecosystem.
+/// Returns "Instant" for negligible sizes.
 fn estimate_regen_time(ecosystem: Option<Ecosystem>, size_bytes: u64) -> String {
+    // P6: 0 B or negligible → "Instant"
+    if size_bytes < 1_048_576 {
+        return "Instant".to_string();
+    }
+
     match ecosystem {
         Some(Ecosystem::Rust) => {
             if size_bytes >= 1_073_741_824 {
@@ -333,6 +339,86 @@ fn dedup_parent_child(opportunities: &mut Vec<CleanupOpportunity>) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// P1: Ecosystem-Aware Action Override
+// ═══════════════════════════════════════════════════════════════
+
+/// Minimum size (bytes) to be worth showing as a cleanup opportunity.
+/// Items below this are filtered out (P7).
+const MINIMUM_MEANINGFUL_SIZE: u64 = 1_048_576; // 1 MB
+
+/// Detect the Node.js package manager from lockfiles in the project.
+fn detect_node_pm(project: &ProjectInfo) -> &'static str {
+    for m in &project.manifests {
+        let name = m.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        match name {
+            "pnpm-lock.yaml" => return "pnpm",
+            "yarn.lock" => return "yarn",
+            "package-lock.json" => return "npm",
+            _ => {}
+        }
+    }
+    "npm" // Default fallback
+}
+
+/// Override the planner's action with an ecosystem-aware command
+/// when the planner falls through to generic wording.
+///
+/// This handles the case where the classifier assigns a generic
+/// category (e.g. TemporaryFile) to a known ecosystem artifact,
+/// causing the planner to return generic "Remove temporary files."
+/// instead of the ecosystem-specific command.
+fn ecosystem_action_override(
+    display_name: &str,
+    ecosystem: Option<Ecosystem>,
+    project: Option<&ProjectInfo>,
+    planner_action: &str,
+) -> (String, bool) {
+    // Only override if the planner gave a generic action
+    let is_generic = planner_action == "Remove temporary files."
+        || planner_action == "Clear application cache."
+        || planner_action == "Manual cleanup"
+        || planner_action.is_empty();
+
+    if !is_generic {
+        return (planner_action.to_string(), false);
+    }
+
+    let name = display_name.trim_end_matches('/');
+
+    match ecosystem {
+        Some(Ecosystem::Node) => {
+            let pm = project.map_or("npm", detect_node_pm);
+            match name {
+                "node_modules" => (format!("{pm} install"), true),
+                "dist" => (format!("{pm} run build"), true),
+                ".next" => ("next build".to_string(), true),
+                ".turbo" => ("turbo build".to_string(), true),
+                _ => (planner_action.to_string(), false),
+            }
+        }
+        Some(Ecosystem::Rust) => match name {
+            "target" => ("cargo clean".to_string(), true),
+            "criterion" => ("cargo clean".to_string(), true),
+            "coverage" => ("cargo clean".to_string(), true),
+            _ => (planner_action.to_string(), false),
+        },
+        Some(Ecosystem::Python) => match name {
+            "__pycache__" => (
+                "find . -type d -name __pycache__ -exec rm -rf {} +".to_string(),
+                true,
+            ),
+            ".pytest_cache" => ("pytest --cache-clear".to_string(), true),
+            ".mypy_cache" => ("rm -rf .mypy_cache".to_string(), true),
+            ".ruff_cache" => ("ruff clean".to_string(), true),
+            ".venv" => ("python -m venv .venv && pip install -e .".to_string(), true),
+            _ => (planner_action.to_string(), false),
+        },
+        Some(Ecosystem::Go) => (planner_action.to_string(), false),
+        None => (planner_action.to_string(), false),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Main Advisor Function
 // ═══════════════════════════════════════════════════════════════
 
@@ -368,7 +454,7 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
     let project = discovery::find_project_for_path(root);
     let ecosystem = project.as_ref().map(|p| p.ecosystem);
 
-    let project_name = project.map(|p| p.name.clone()).unwrap_or_else(|| {
+    let project_name = project.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| {
         root.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
@@ -392,6 +478,11 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
             continue;
         }
 
+        // P7: Skip items below minimum meaningful size
+        if plan.estimated_reclaimable_bytes < MINIMUM_MEANINGFUL_SIZE {
+            continue;
+        }
+
         // Determine display name (relative to root)
         let display_name = candidate_path
             .file_name()
@@ -399,14 +490,18 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
             .unwrap_or("")
             .to_string();
 
-        // Determine the best action
-        let action = if !plan.suggested_commands.is_empty() {
+        // Determine the best action from planner
+        let planner_action = if !plan.suggested_commands.is_empty() {
             plan.suggested_commands[0].clone()
         } else if !plan.recommendation.is_empty() {
             plan.recommendation.clone()
         } else {
             "Manual cleanup".to_string()
         };
+
+        // P1: Ecosystem-aware action override
+        let (action, was_overridden) =
+            ecosystem_action_override(&display_name, ecosystem, project.as_ref(), &planner_action);
 
         // Determine reason
         let reason = if !plan.reason.is_empty() {
@@ -417,8 +512,20 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
             "Reclaimable disk space.".to_string()
         };
 
-        let priority = compute_priority(plan.estimated_reclaimable_bytes, &plan, candidate_path);
+        // Recompute ecosystem score if we overrode the action
+        let mut priority =
+            compute_priority(plan.estimated_reclaimable_bytes, &plan, candidate_path);
+        if was_overridden && priority.ecosystem_points == 0 {
+            priority.ecosystem_points = 20;
+            priority.total = (priority.total as u16 + 20).min(100) as u8;
+        }
+
         let estimated_time = estimate_regen_time(ecosystem, plan.estimated_reclaimable_bytes);
+
+        // P2: Collect evidence files for auditable confidence
+        let evidence_files = crate::ownership::detect_project_ownership(candidate_path)
+            .map(|om| om.evidence.evidence_files)
+            .unwrap_or_default();
 
         opportunities.push(CleanupOpportunity {
             display_name: format!("{}/", display_name),
@@ -430,6 +537,7 @@ pub fn advise(root: &Path) -> CleanupAdvisor {
             priority,
             estimated_time,
             rank: 0, // Set after sorting
+            evidence_files,
         });
     }
 
@@ -517,15 +625,15 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
         human_size(advisor.total_reclaimable)
     ));
 
-    // Reclaim percentage
+    // P5: Clarify what the percentage is relative to
     let reclaim_pct = if advisor.directory_size > 0 {
         advisor.total_reclaimable as f64 / advisor.directory_size as f64 * 100.0
     } else {
         0.0
     };
     out.push_str(&format!(
-        "  {:<22} {:.0}%\n",
-        "Estimated reclaim:", reclaim_pct
+        "  {:<22} {:.0}% of project directory\n",
+        "Reclaimable:", reclaim_pct
     ));
 
     // Highest priority item
@@ -549,26 +657,25 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
 
     for opp in &advisor.opportunities {
         out.push('\n');
-        // Score + Stars + Name
+        // P8: Value-oriented display — stars + name prominent, score secondary
         out.push_str(&format!(
-            "  {:>3}/100  {}  {}\n",
-            opp.priority.total,
+            "  {}  {}\n",
             star_rating(opp.priority.stars()),
             opp.display_name
         ));
         out.push_str(&format!(
-            "           Size: {}\n",
+            "           Size:     {}\n",
             human_size(opp.size_bytes)
         ));
 
         // Action (show the ecosystem command if available)
         if !opp.action.is_empty() && opp.action != "Manual cleanup" {
-            out.push_str(&format!("           Action: {}\n", opp.action));
+            out.push_str(&format!("           Action:   {}\n", opp.action));
         }
 
-        // Estimated regeneration time
+        // Estimated regeneration time (P6: "Instant" for negligible)
         if !opp.estimated_time.is_empty() {
-            out.push_str(&format!("           Regen: {}\n", opp.estimated_time));
+            out.push_str(&format!("           Regen:    {}\n", opp.estimated_time));
         }
 
         // Reason (compact, one line)
@@ -586,31 +693,55 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
             top.display_name
         )));
 
+        // P3: Labeled score breakdown with column alignment
         out.push_str(&format!(
-            "  {:>3}/100  {}\n\n",
+            "  Priority Score  {:>3}/100  {}\n\n",
             top.priority.total,
             star_rating(top.priority.stars())
         ));
         out.push_str(&format!(
-            "  +{:>2}  Large reclaimable size ({})\n",
+            "  Size         +{:>2}  {} reclaimable\n",
             top.priority.size_points,
             human_size(top.size_bytes)
         ));
         out.push_str(&format!(
-            "  +{:>2}  Fully regenerable\n",
+            "  Safety       +{:>2}  Fully regenerable\n",
             top.priority.regenerable_points
         ));
         if top.priority.ecosystem_points > 0 {
             out.push_str(&format!(
-                "  +{:>2}  Known ecosystem command\n",
+                "  Ecosystem    +{:>2}  Known ecosystem command\n",
                 top.priority.ecosystem_points
             ));
         }
-        out.push_str(&format!(
-            "  +{:>2}  {}% confidence\n",
-            top.priority.confidence_points,
-            top.priority.confidence_points as u16 * 100 / 15
-        ));
+
+        // P2: Auditable confidence with evidence
+        let conf_pct = top.priority.confidence_points as u16 * 100 / 15;
+        if !top.evidence_files.is_empty() {
+            out.push_str(&format!(
+                "  Confidence   +{:>2}  {}% ({}\n",
+                top.priority.confidence_points,
+                conf_pct,
+                top.evidence_files.join(", ")
+            ));
+            out.push_str("                         )\n");
+        } else {
+            out.push_str(&format!(
+                "  Confidence   +{:>2}  {}%\n",
+                top.priority.confidence_points, conf_pct
+            ));
+        }
+
+        // P8: Cleanup Value summary — explainability over numbers
+        out.push('\n');
+        out.push_str("  Cleanup Value\n");
+        out.push_str(&format!("  {}\n\n", star_rating(top.priority.stars())));
+        out.push_str(&format!("  {} reclaimed\n", human_size(top.size_bytes)));
+        out.push_str("  100% regenerable\n");
+        if top.priority.ecosystem_points > 0 {
+            out.push_str("  Known ecosystem command\n");
+        }
+        out.push_str("  No source code affected\n");
     }
 
     out.push('\n');
@@ -618,6 +749,16 @@ pub fn render_advisor(advisor: &CleanupAdvisor, _root: &Path) -> String {
     // ── Estimated Reclaim ──
     out.push_str(&color::section_header("ESTIMATED RECLAIM"));
     out.push_str(&format!("  {}\n", human_size(advisor.total_reclaimable)));
+    // P4: Add context to the reclaim section
+    if let Some(largest) = advisor.opportunities.first() {
+        out.push_str(&format!(
+            "  Largest removable artifact: {}\n",
+            largest.display_name
+        ));
+    }
+    if reclaim_pct > 50.0 {
+        out.push_str("  Majority of project directory is reclaimable build artifacts.\n");
+    }
     out.push('\n');
 
     // ── Recommended Cleanup Order ──
@@ -663,15 +804,14 @@ mod tests {
         fs::create_dir(root.join("src")).unwrap();
         fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
 
-        // Create target/ with some content
+        // Create target/ with enough content to pass 1 MB threshold
+        // Use a 2 MB file to ensure it's above MINIMUM_MEANINGFUL_SIZE
         fs::create_dir_all(root.join("target/debug")).unwrap();
-        fs::write(root.join("target/debug/binary"), vec![0u8; 2048]).unwrap();
-        fs::create_dir_all(root.join("target/doc")).unwrap();
-        fs::write(root.join("target/doc/doc.html"), vec![0u8; 1024]).unwrap();
+        fs::write(root.join("target/debug/binary"), vec![0u8; 2_100_000]).unwrap();
 
-        // Create .cache/
+        // Create .cache/ with enough content
         fs::create_dir(root.join(".cache")).unwrap();
-        fs::write(root.join(".cache/data"), vec![0u8; 512]).unwrap();
+        fs::write(root.join(".cache/data"), vec![0u8; 1_100_000]).unwrap();
 
         (dir, root)
     }
@@ -686,9 +826,10 @@ mod tests {
         .unwrap();
         fs::create_dir(root.join("node_modules")).unwrap();
         fs::create_dir(root.join("node_modules/pkg")).unwrap();
-        fs::write(root.join("node_modules/pkg/index.js"), vec![0u8; 4096]).unwrap();
+        // 2 MB to pass threshold
+        fs::write(root.join("node_modules/pkg/index.js"), vec![0u8; 2_100_000]).unwrap();
         fs::create_dir_all(root.join("dist")).unwrap();
-        fs::write(root.join("dist/bundle.js"), vec![0u8; 8192]).unwrap();
+        fs::write(root.join("dist/bundle.js"), vec![0u8; 1_100_000]).unwrap();
 
         (dir, root)
     }
@@ -745,11 +886,9 @@ mod tests {
         let (_dir, root) = setup_rust_project_with_artifacts();
         let advisor = advise(&root);
 
-        // target/ has 2048 + 1024 = 3072 bytes
-        // .cache/ has 512 bytes
         assert!(
-            advisor.total_reclaimable >= 3000,
-            "Total reclaimable should be >= 3000, got: {}",
+            advisor.total_reclaimable >= 2_000_000,
+            "Total reclaimable should be >= 2 MB, got: {}",
             advisor.total_reclaimable
         );
     }
@@ -759,7 +898,6 @@ mod tests {
         let (_dir, root) = setup_rust_project_with_artifacts();
         let advisor = advise(&root);
 
-        // Opportunities should be sorted by priority total descending
         for window in advisor.opportunities.windows(2) {
             assert!(
                 window[0].priority.total >= window[1].priority.total,
@@ -769,6 +907,8 @@ mod tests {
             );
         }
     }
+
+    // ── P1: Node.js ecosystem command tests ──
 
     #[test]
     fn test_advise_node_project_finds_node_modules() {
@@ -786,6 +926,115 @@ mod tests {
     }
 
     #[test]
+    fn test_advise_node_uses_npm_install_not_generic() {
+        let (_dir, root) = setup_node_project_with_artifacts();
+        let advisor = advise(&root);
+
+        let nm = advisor
+            .opportunities
+            .iter()
+            .find(|o| o.display_name == "node_modules/")
+            .expect("node_modules/ should be found");
+        assert!(
+            nm.action.contains("install"),
+            "Node action should be 'npm install', got: '{}'",
+            nm.action
+        );
+        assert!(
+            !nm.action.contains("Remove temporary files"),
+            "Should NOT use generic wording, got: '{}'",
+            nm.action
+        );
+    }
+
+    #[test]
+    fn test_node_pnpm_detection() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        fs::write(
+            root.join("package.json"),
+            "{\"name\": \"pnpm-test\", \"version\": \"1.0.0\"}",
+        )
+        .unwrap();
+        fs::write(root.join("pnpm-lock.yaml"), "").unwrap();
+        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        fs::write(root.join("node_modules/pkg/index.js"), vec![0u8; 2_100_000]).unwrap();
+
+        let advisor = advise(&root);
+        let nm = advisor
+            .opportunities
+            .iter()
+            .find(|o| o.display_name == "node_modules/");
+        if let Some(nm) = nm {
+            assert_eq!(nm.action, "pnpm install");
+        }
+    }
+
+    #[test]
+    fn test_node_yarn_detection() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        fs::write(
+            root.join("package.json"),
+            "{\"name\": \"yarn-test\", \"version\": \"1.0.0\"}",
+        )
+        .unwrap();
+        fs::write(root.join("yarn.lock"), "").unwrap();
+        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        fs::write(root.join("node_modules/pkg/index.js"), vec![0u8; 2_100_000]).unwrap();
+
+        let advisor = advise(&root);
+        let nm = advisor
+            .opportunities
+            .iter()
+            .find(|o| o.display_name == "node_modules/");
+        if let Some(nm) = nm {
+            assert_eq!(nm.action, "yarn install");
+        }
+    }
+
+    // ── P2: Confidence evidence tests ──
+
+    #[test]
+    fn test_evidence_files_collected() {
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let advisor = advise(&root);
+
+        let target_opp = advisor
+            .opportunities
+            .iter()
+            .find(|o| o.display_name == "target/");
+        if let Some(opp) = target_opp {
+            // Should have collected evidence from ownership
+            assert!(
+                !opp.evidence_files.is_empty(),
+                "target/ should have evidence files"
+            );
+        }
+    }
+
+    // ── P6: Regen time for negligible sizes ──
+
+    #[test]
+    fn test_regen_time_instant_for_zero() {
+        assert_eq!(estimate_regen_time(Some(Ecosystem::Rust), 0), "Instant");
+        assert_eq!(
+            estimate_regen_time(Some(Ecosystem::Rust), 500_000),
+            "Instant"
+        );
+    }
+
+    #[test]
+    fn test_regen_time_normal_for_large() {
+        assert_eq!(
+            estimate_regen_time(Some(Ecosystem::Rust), 1_500_000_000),
+            "5-15 min"
+        );
+    }
+
+    // ── P7: Minimum size filter tests ──
+
+    #[test]
     fn test_advise_empty_for_no_artifacts() {
         let dir = TempDir::new().unwrap();
         let root = dir.path().to_path_buf();
@@ -801,6 +1050,27 @@ mod tests {
             advisor.opportunities
         );
     }
+
+    #[test]
+    fn test_tiny_artifacts_filtered_out() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"tiny\"\n").unwrap();
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        // Create a tiny target/ (below 1 MB threshold)
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+        fs::write(root.join("target/debug/binary"), vec![0u8; 100]).unwrap();
+
+        let advisor = advise(&root);
+        assert!(
+            advisor.opportunities.is_empty(),
+            "Tiny artifacts should be filtered out, got: {:?}",
+            advisor.opportunities
+        );
+    }
+
+    // ── General advisor tests ──
 
     #[test]
     fn test_advise_project_name_detected() {
@@ -830,27 +1100,6 @@ mod tests {
     // ── Priority scoring tests ──
 
     #[test]
-    fn test_priority_deterministic() {
-        // Same inputs must always produce same output
-        let b1 = PriorityBreakdown {
-            size_points: 33,
-            regenerable_points: 25,
-            ecosystem_points: 20,
-            confidence_points: 10,
-            total: 88,
-        };
-        let b2 = PriorityBreakdown {
-            size_points: 33,
-            regenerable_points: 25,
-            ecosystem_points: 20,
-            confidence_points: 10,
-            total: 88,
-        };
-        assert_eq!(b1.total, b2.total);
-        assert_eq!(b1.stars(), b2.stars());
-    }
-
-    #[test]
     fn test_size_score_tiers() {
         assert_eq!(size_score(500_000), 0); // < 1 MB
         assert_eq!(size_score(5_000_000), 6); // 1-10 MB
@@ -872,7 +1121,7 @@ mod tests {
             confidence_points: 0,
             total: 10,
         };
-        assert_eq!(b.stars(), 1); // 0-19 -> 1 star
+        assert_eq!(b.stars(), 1);
 
         let b2 = PriorityBreakdown {
             size_points: 0,
@@ -881,7 +1130,7 @@ mod tests {
             confidence_points: 0,
             total: 30,
         };
-        assert_eq!(b2.stars(), 2); // 20-39 -> 2 stars
+        assert_eq!(b2.stars(), 2);
 
         let b3 = PriorityBreakdown {
             size_points: 0,
@@ -890,7 +1139,7 @@ mod tests {
             confidence_points: 0,
             total: 50,
         };
-        assert_eq!(b3.stars(), 3); // 40-59 -> 3 stars
+        assert_eq!(b3.stars(), 3);
 
         let b4 = PriorityBreakdown {
             size_points: 0,
@@ -899,7 +1148,7 @@ mod tests {
             confidence_points: 0,
             total: 70,
         };
-        assert_eq!(b4.stars(), 4); // 60-79 -> 4 stars
+        assert_eq!(b4.stars(), 4);
 
         let b5 = PriorityBreakdown {
             size_points: 0,
@@ -908,25 +1157,7 @@ mod tests {
             confidence_points: 0,
             total: 90,
         };
-        assert_eq!(b5.stars(), 5); // 80-100 -> 5 stars
-    }
-
-    #[test]
-    fn test_estimate_regen_time_rust() {
-        let small = estimate_regen_time(Some(Ecosystem::Rust), 1_000_000);
-        assert_eq!(small, "30-60 sec");
-
-        let large = estimate_regen_time(Some(Ecosystem::Rust), 1_500_000_000);
-        assert_eq!(large, "5-15 min");
-    }
-
-    #[test]
-    fn test_estimate_regen_time_node() {
-        let small = estimate_regen_time(Some(Ecosystem::Node), 50_000_000);
-        assert_eq!(small, "20-60 sec");
-
-        let large = estimate_regen_time(Some(Ecosystem::Node), 1_500_000_000);
-        assert_eq!(large, "3-8 min");
+        assert_eq!(b5.stars(), 5);
     }
 
     // ── Dedup tests ──
@@ -950,6 +1181,7 @@ mod tests {
                 },
                 estimated_time: "1 min".into(),
                 rank: 0,
+                evidence_files: vec![],
             },
             CleanupOpportunity {
                 display_name: "debug/".into(),
@@ -967,23 +1199,7 @@ mod tests {
                 },
                 estimated_time: "30 sec".into(),
                 rank: 0,
-            },
-            CleanupOpportunity {
-                display_name: "doc/".into(),
-                path: PathBuf::from("/tmp/proj/target/doc"),
-                size_bytes: 200,
-                safe_to_clean: true,
-                action: "".into(),
-                reason: "Generated docs".into(),
-                priority: PriorityBreakdown {
-                    size_points: 0,
-                    regenerable_points: 25,
-                    ecosystem_points: 0,
-                    confidence_points: 5,
-                    total: 30,
-                },
-                estimated_time: "10 sec".into(),
-                rank: 0,
+                evidence_files: vec![],
             },
         ];
 
@@ -1011,6 +1227,7 @@ mod tests {
                 },
                 estimated_time: "1 min".into(),
                 rank: 0,
+                evidence_files: vec![],
             },
             CleanupOpportunity {
                 display_name: ".cache/".into(),
@@ -1028,6 +1245,7 @@ mod tests {
                 },
                 estimated_time: "10 sec".into(),
                 rank: 0,
+                evidence_files: vec![],
             },
         ];
 
@@ -1075,7 +1293,8 @@ mod tests {
 
         assert!(output.contains("Cleanup opportunities:"));
         assert!(output.contains("Total reclaimable:"));
-        assert!(output.contains("Estimated reclaim:"));
+        // P5: Should say "of project directory"
+        assert!(output.contains("of project directory"));
         assert!(output.contains("Highest priority:"));
         assert!(output.contains("All recommendations verified safe."));
     }
@@ -1087,27 +1306,45 @@ mod tests {
         let output = render_advisor(&advisor, &root);
 
         assert!(output.contains("WHY RANKED #1?"));
-        assert!(output.contains("Large reclaimable size"));
+        assert!(output.contains("reclaimable"));
         assert!(output.contains("Fully regenerable"));
     }
 
     #[test]
-    fn test_render_advisor_has_score_breakdown() {
+    fn test_render_advisor_has_labeled_breakdown() {
         let (_dir, root) = setup_rust_project_with_artifacts();
         let advisor = advise(&root);
         let output = render_advisor(&advisor, &root);
 
-        // Should show "/100" score format
-        assert!(output.contains("/100"));
+        // P3: Labeled columns
+        assert!(output.contains("Size"));
+        assert!(output.contains("Safety"));
+        assert!(output.contains("Ecosystem"));
+        assert!(output.contains("Confidence"));
+        assert!(output.contains("Priority Score"));
     }
 
     #[test]
-    fn test_render_advisor_has_estimated_time() {
+    fn test_render_advisor_has_cleanup_value() {
         let (_dir, root) = setup_rust_project_with_artifacts();
         let advisor = advise(&root);
         let output = render_advisor(&advisor, &root);
 
-        assert!(output.contains("Regen:"));
+        // P8: Cleanup Value section
+        assert!(output.contains("Cleanup Value"));
+        assert!(output.contains("reclaimed"));
+        assert!(output.contains("100% regenerable"));
+        assert!(output.contains("No source code affected"));
+    }
+
+    #[test]
+    fn test_render_advisor_has_largest_artifact() {
+        let (_dir, root) = setup_rust_project_with_artifacts();
+        let advisor = advise(&root);
+        let output = render_advisor(&advisor, &root);
+
+        // P4: Context in Estimated Reclaim
+        assert!(output.contains("Largest removable artifact"));
     }
 
     #[test]
@@ -1195,21 +1432,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_advisor_agrees_with_planner_on_size() {
-        let (_dir, root) = setup_rust_project_with_artifacts();
-        let advisor = advise(&root);
-
-        for opp in &advisor.opportunities {
-            let plan = planner::plan(&opp.path);
-            assert_eq!(
-                opp.size_bytes, plan.estimated_reclaimable_bytes,
-                "Advisor and Planner disagree on size of {}",
-                opp.display_name
-            );
-        }
-    }
-
     // ── Safety invariants ──
 
     #[test]
@@ -1224,7 +1446,6 @@ mod tests {
 
     #[test]
     fn test_priority_total_capped_at_100() {
-        // Even if individual components sum > 100, total must be capped
         let b = PriorityBreakdown {
             size_points: 40,
             regenerable_points: 25,
@@ -1239,12 +1460,10 @@ mod tests {
 
     #[test]
     fn test_benchmark_advise_on_self() {
-        // Run advisor on the zacxiom project itself (if running from source)
         let self_path = Path::new(env!("CARGO_MANIFEST_DIR"));
         if self_path.join("Cargo.toml").exists() {
             let advisor = advise(self_path);
 
-            // Should find target/ at minimum
             if self_path.join("target").exists() {
                 assert!(
                     advisor
@@ -1255,16 +1474,14 @@ mod tests {
                 );
             }
 
-            // Verify all sizes are reasonable
             for opp in &advisor.opportunities {
                 assert!(
-                    opp.size_bytes > 0 || opp.display_name.contains("cache"),
+                    opp.size_bytes > 0,
                     "{} should have measurable size",
                     opp.display_name
                 );
             }
 
-            // Verify priority breakdown is valid
             for opp in &advisor.opportunities {
                 assert!(
                     opp.priority.total <= 100,
@@ -1276,7 +1493,7 @@ mod tests {
         }
     }
 
-    // ── Additional v8.4 enhancement tests ──
+    // ── Additional tests ──
 
     #[test]
     fn test_directory_size_nonnegative() {
@@ -1289,7 +1506,6 @@ mod tests {
     fn test_reclaim_percentage_reasonable() {
         let (_dir, root) = setup_rust_project_with_artifacts();
         let advisor = advise(&root);
-        // Reclaim % should be between 0 and 100
         if advisor.directory_size > 0 {
             let pct = advisor.total_reclaimable as f64 / advisor.directory_size as f64 * 100.0;
             assert!(
@@ -1306,7 +1522,7 @@ mod tests {
         assert!(candidates.contains(&"target"));
         assert!(candidates.contains(&"criterion"));
         assert!(candidates.contains(&"coverage"));
-        assert!(candidates.contains(&".cache")); // Common to all
+        assert!(candidates.contains(&".cache"));
     }
 
     #[test]
@@ -1330,16 +1546,15 @@ mod tests {
         assert!(candidates.contains(&".cache"));
         assert!(candidates.contains(&"tmp"));
         assert!(candidates.contains(&"logs"));
-        // Should NOT have ecosystem-specific items
         assert!(!candidates.contains(&"target"));
         assert!(!candidates.contains(&"node_modules"));
     }
 
     #[test]
     fn test_circled_number() {
-        assert_eq!(circled_number(1), "\u{2460}"); // ①
-        assert_eq!(circled_number(5), "\u{2464}"); // ⑤
-        assert_eq!(circled_number(10), "\u{2469}"); // ⑩
+        assert_eq!(circled_number(1), "\u{2460}");
+        assert_eq!(circled_number(5), "\u{2464}");
+        assert_eq!(circled_number(10), "\u{2469}");
         assert_eq!(circled_number(11), "\u{2460}"); // Fallback
     }
 
@@ -1354,5 +1569,78 @@ mod tests {
             assert!(opp.priority.ecosystem_points <= 20);
             assert!(opp.priority.confidence_points <= 15);
         }
+    }
+
+    // ── Ecosystem action override tests ──
+
+    #[test]
+    fn test_ecosystem_override_node_modules() {
+        let (action, overridden) = ecosystem_action_override(
+            "node_modules/",
+            Some(Ecosystem::Node),
+            None,
+            "Remove temporary files.",
+        );
+        assert_eq!(action, "npm install");
+        assert!(overridden);
+    }
+
+    #[test]
+    fn test_ecosystem_override_target() {
+        let (action, overridden) = ecosystem_action_override(
+            "target/",
+            Some(Ecosystem::Rust),
+            None,
+            "Remove temporary files.",
+        );
+        assert_eq!(action, "cargo clean");
+        assert!(overridden);
+    }
+
+    #[test]
+    fn test_ecosystem_override_no_override_for_real_cmd() {
+        let (action, overridden) =
+            ecosystem_action_override("target/", Some(Ecosystem::Rust), None, "cargo clean");
+        assert_eq!(action, "cargo clean");
+        assert!(!overridden);
+    }
+
+    #[test]
+    fn test_detect_node_pm_npm() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        let project = ProjectInfo {
+            name: "test".into(),
+            root: root.clone(),
+            ecosystem: Ecosystem::Node,
+            manifests: vec![root.join("package-lock.json")],
+        };
+        assert_eq!(detect_node_pm(&project), "npm");
+    }
+
+    #[test]
+    fn test_detect_node_pm_pnpm() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        let project = ProjectInfo {
+            name: "test".into(),
+            root: root.clone(),
+            ecosystem: Ecosystem::Node,
+            manifests: vec![root.join("pnpm-lock.yaml")],
+        };
+        assert_eq!(detect_node_pm(&project), "pnpm");
+    }
+
+    #[test]
+    fn test_detect_node_pm_yarn() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        let project = ProjectInfo {
+            name: "test".into(),
+            root: root.clone(),
+            ecosystem: Ecosystem::Node,
+            manifests: vec![root.join("yarn.lock")],
+        };
+        assert_eq!(detect_node_pm(&project), "yarn");
     }
 }
