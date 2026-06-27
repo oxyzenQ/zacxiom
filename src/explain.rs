@@ -8,6 +8,7 @@
 //! No path matching. No if/else chains. No domain detection.
 
 use crate::confidence::{confidence, Tier};
+use crate::engine::types::RiskLevel;
 use crate::engine::{Category, ClassificationResult};
 use crate::rules::ClassifiedFile;
 use crate::simulator;
@@ -25,16 +26,19 @@ pub struct Explanation {
 }
 
 /// Generate an explanation from classified files and engine results.
-pub fn explain_path(path: &str, classified: &[ClassifiedFile]) -> Explanation {
-    // Use the engine to classify this path
-    let eng_result = crate::engine::classify(std::path::Path::new(path));
+/// If `eng_override` is provided, it takes precedence over calling engine::classify.
+pub fn explain_path(
+    path: &str,
+    classified: &[ClassifiedFile],
+    eng_override: Option<&ClassificationResult>,
+) -> Explanation {
+    let eng_result: std::borrow::Cow<ClassificationResult> = match eng_override {
+        Some(eng) => std::borrow::Cow::Borrowed(eng),
+        None => std::borrow::Cow::Owned(crate::engine::classify(std::path::Path::new(path))),
+    };
 
-    // v6.3.2: Engine category is authoritative for explain tier.
-    // Legacy classified files are used ONLY for size/count, not tier.
     let tier = category_to_tier(&eng_result.category);
-
     let total_size: u64 = classified.iter().map(|f| f.size).sum();
-
     explain_domain(&eng_result, total_size, tier, classified.len())
 }
 
@@ -109,10 +113,8 @@ pub fn explain_domain(
     tier: Tier,
     file_count: usize,
 ) -> Explanation {
-    // v10.1: Upgrade Unknown to ProjectWorkspace when directory has project markers
-    let category = upgrade_unknown_to_workspace(eng).unwrap_or(eng.category);
-    let (what, why, consequence, recommendation) = render_category(&category, eng);
-    let title = semantic_title(&category, &eng.matched_by);
+    let (what, why, consequence, recommendation) = render_category(&eng.category, eng);
+    let title = semantic_title(&eng.category, &eng.matched_by);
 
     Explanation {
         title,
@@ -353,48 +355,108 @@ pub fn explain_file(file: &ClassifiedFile) -> Explanation {
     explain_domain(&eng, file.size, tier, 1)
 }
 
-/// smart-explain: when engine says Unknown but path looks like a workspace,
-/// check for project markers and upgrade the category.
-fn upgrade_unknown_to_workspace(eng: &ClassificationResult) -> Option<Category> {
+/// smart-upgrade: when engine says Unknown but path looks like a project workspace,
+/// mutate the entire ClassificationResult with proper category, confidence, reasons,
+/// risk level, and impact data. Returns true if an upgrade occurred.
+pub fn upgrade_workspace(eng: &mut ClassificationResult) -> bool {
     if eng.category != Category::Unknown {
-        return None;
+        return false;
     }
     let path = &eng.path;
     if !path.is_dir() {
-        return None;
+        return false;
     }
-    // Check for common project markers
-    let markers = [
-        "Cargo.toml",
-        "package.json",
-        "go.mod",
-        "Makefile",
-        "CMakeLists.txt",
-        "pyproject.toml",
-        "setup.py",
-        "build.gradle",
-        "build.gradle.kts",
-        "pom.xml",
-        "meson.build",
-        "build.zig",
-        "pubspec.yaml",
-        "Gemfile",
-        "mix.exs",
-        "rebar.config",
+
+    // Check for project markers
+    let markers: &[(&str, &str)] = &[
+        ("Cargo.toml", "Rust project manifest"),
+        ("package.json", "Node.js project manifest"),
+        ("go.mod", "Go module definition"),
+        ("Makefile", "Build automation"),
+        ("CMakeLists.txt", "CMake build definition"),
+        ("pyproject.toml", "Python project manifest"),
+        ("setup.py", "Python package setup"),
+        ("build.gradle", "Gradle build script"),
+        ("build.gradle.kts", "Gradle Kotlin build script"),
+        ("pom.xml", "Maven project definition"),
+        ("meson.build", "Meson build definition"),
+        ("build.zig", "Zig build definition"),
+        ("pubspec.yaml", "Dart/Flutter project manifest"),
+        ("Gemfile", "Ruby dependency manifest"),
+        ("mix.exs", "Elixir project definition"),
+        ("rebar.config", "Erlang build config"),
     ];
-    for marker in &markers {
-        if path.join(marker).exists() {
-            return Some(Category::ProjectWorkspace);
+
+    let mut found_markers: Vec<String> = Vec::new();
+    for (file, desc) in markers {
+        if path.join(file).exists() {
+            found_markers.push(format!("{} ({})", file, desc));
         }
     }
-    // Check if path has source code subdirectories (indicates a workspace)
-    let code_dirs = ["src", "lib", "include", "app"];
-    for dir in &code_dirs {
+
+    // Check for source code directories
+    let code_dirs: &[&str] = &["src", "lib", "include", "app"];
+    for dir in code_dirs {
         if path.join(dir).is_dir() {
-            return Some(Category::ProjectWorkspace);
+            found_markers.push(format!("{}/ (source directory)", dir));
         }
     }
-    None
+
+    // Check for git repository
+    if path.join(".git").exists() {
+        found_markers.push(".git/ (version controlled)".into());
+    }
+
+    if found_markers.is_empty() {
+        return false;
+    }
+
+    // ── Perform full upgrade of the ClassificationResult ──
+    eng.category = Category::ProjectWorkspace;
+    eng.risk_level = RiskLevel::Critical;
+    eng.regenerable = false;
+    eng.matched_by = "smart-upgrade-workspace".into();
+
+    // Confidence: high because we have direct evidence
+    eng.confidence_score = (80 + found_markers.len().min(6) * 3).min(99) as u8;
+    eng.confidence = eng.confidence_score as f32 / 100.0;
+    eng.confidence_explanation =
+        "High Confidence — project workspace detected from filesystem markers".into();
+    eng.confidence_reasons = found_markers.iter().map(|m| format!("✓ {m}")).collect();
+
+    // Reasons
+    eng.reasons = vec![
+        "This is a project workspace — contains user-authored source code and build manifests"
+            .into(),
+        format!(
+            "Detected {} project marker(s): {}",
+            found_markers.len(),
+            found_markers
+                .iter()
+                .map(|m| m.split_once(' ').map(|s| s.0).unwrap_or(m))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ];
+
+    // Artifact intelligence
+    eng.created_by = "User — project initialized by developer".into();
+    eng.regenerated_by = "Not regenerable — must recreate from scratch or version control".into();
+    eng.depends_on = found_markers
+        .first()
+        .map(|m| m.split_once(' ').map(|s| s.0).unwrap_or(m))
+        .unwrap_or("project files")
+        .to_string();
+    eng.deletion_impact =
+        "Permanent loss of source code, configuration, and project history. Cannot be recovered."
+            .into();
+    eng.classification_reasoning = found_markers
+        .iter()
+        .enumerate()
+        .map(|(i, m)| format!("{}. {}", i + 1, m))
+        .collect();
+
+    true
 }
 
 /// v7.1: Artifact Intelligence — lifecycle and ownership

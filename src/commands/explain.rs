@@ -44,10 +44,16 @@ pub fn run_explain(path: &str) {
         let entries = vec![entry];
         let threads = 1;
         let classified = pipeline::classify(entries, &ctx, threads);
-        let exp = explain::explain_path(path, &classified);
         let mut eng = crate::engine::classify(&target);
+        explain::upgrade_workspace(&mut eng);
         boost_confidence_from_discovery(&mut eng);
-        println!("{}", explain::render_card(&exp, Some(&eng)));
+        println!(
+            "{}",
+            explain::render_card(
+                &explain::explain_path(path, &classified, Some(&eng)),
+                Some(&eng)
+            )
+        );
         return;
     }
 
@@ -57,10 +63,16 @@ pub fn run_explain(path: &str) {
     let threads = pipeline::optimal_threads(entries.len());
     let classified = pipeline::classify(entries, &ctx, threads);
 
-    let exp = explain::explain_path(path, &classified);
     let mut eng = crate::engine::classify(&PathBuf::from(path));
+    explain::upgrade_workspace(&mut eng);
     boost_confidence_from_discovery(&mut eng);
-    println!("{}", explain::render_card(&exp, Some(&eng)));
+    println!(
+        "{}",
+        explain::render_card(
+            &explain::explain_path(path, &classified, Some(&eng)),
+            Some(&eng)
+        )
+    );
 }
 
 /// v8.0: Boost confidence when project ownership is discovered.
