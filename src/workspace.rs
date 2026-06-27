@@ -248,7 +248,10 @@ pub fn render_workspace_summary(summary: &WorkspaceSummary) -> String {
 
     out.push('\n');
     out.push_str("  Projects:\n");
-    for proj in &summary.projects {
+    // Sort by reclaimable size (largest first) for actionable summary
+    let mut sorted: Vec<&WorkspaceProject> = summary.projects.iter().collect();
+    sorted.sort_by_key(|p| std::cmp::Reverse(p.reclaimable));
+    for proj in &sorted {
         let eco_display = proj
             .ecosystem
             .map(|e| e.display().to_string())

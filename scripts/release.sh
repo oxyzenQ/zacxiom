@@ -38,12 +38,11 @@ cp target/release/zacxiom "$OUT_DIR/"
 cp README.md "$OUT_DIR/"
 cp LICENSE "$OUT_DIR/"
 
-# Create archive
+# Create archive (write to target/ so tar doesn't see the archive in OUT_DIR)
 ARCHIVE="${RELEASE_NAME}.tar.gz"
 tar -czf "target/${ARCHIVE}" -C "$OUT_DIR" .
 
 # Generate SHA-512 checksum
-CHECKSUM_FILE="target/${ARCHIVE}.sha512"
 (cd target && sha512sum "${ARCHIVE}" > "${ARCHIVE}.sha512")
 echo -e "  ${GREEN}✓${NC} Archive: target/${ARCHIVE}"
 echo -e "  ${GREEN}✓${NC} Checksum: target/${ARCHIVE}.sha512"

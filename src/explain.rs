@@ -109,8 +109,10 @@ pub fn explain_domain(
     tier: Tier,
     file_count: usize,
 ) -> Explanation {
-    let (what, why, consequence, recommendation) = render_category(&eng.category, eng);
-    let title = semantic_title(&eng.category, &eng.matched_by);
+    // v10.1: Upgrade Unknown to ProjectWorkspace when directory has project markers
+    let category = upgrade_unknown_to_workspace(eng).unwrap_or(eng.category);
+    let (what, why, consequence, recommendation) = render_category(&category, eng);
+    let title = semantic_title(&category, &eng.matched_by);
 
     Explanation {
         title,
@@ -351,10 +353,51 @@ pub fn explain_file(file: &ClassifiedFile) -> Explanation {
     explain_domain(&eng, file.size, tier, 1)
 }
 
-/// Render an explanation card with confidence (v6.3).
-/// v7.1: Renders artifact intelligence — created_by, regenerated_by,
-/// depends_on, deletion_impact, and classification reasoning.
-/// v8.0: Renders PROJECT and PROJECT CONSUMERS from discovery engine.
+/// smart-explain: when engine says Unknown but path looks like a workspace,
+/// check for project markers and upgrade the category.
+fn upgrade_unknown_to_workspace(eng: &ClassificationResult) -> Option<Category> {
+    if eng.category != Category::Unknown {
+        return None;
+    }
+    let path = &eng.path;
+    if !path.is_dir() {
+        return None;
+    }
+    // Check for common project markers
+    let markers = [
+        "Cargo.toml",
+        "package.json",
+        "go.mod",
+        "Makefile",
+        "CMakeLists.txt",
+        "pyproject.toml",
+        "setup.py",
+        "build.gradle",
+        "build.gradle.kts",
+        "pom.xml",
+        "meson.build",
+        "build.zig",
+        "pubspec.yaml",
+        "Gemfile",
+        "mix.exs",
+        "rebar.config",
+    ];
+    for marker in &markers {
+        if path.join(marker).exists() {
+            return Some(Category::ProjectWorkspace);
+        }
+    }
+    // Check if path has source code subdirectories (indicates a workspace)
+    let code_dirs = ["src", "lib", "include", "app"];
+    for dir in &code_dirs {
+        if path.join(dir).is_dir() {
+            return Some(Category::ProjectWorkspace);
+        }
+    }
+    None
+}
+
+/// v7.1: Artifact Intelligence — lifecycle and ownership
 pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::ClassificationResult>) -> String {
     let mut out = String::new();
     let stars = exp.tier.stars();
@@ -411,10 +454,14 @@ pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::Classification
             }
         }
 
-        // v6.3: Confidence score
+        // v6.3: Confidence and safety — separated to avoid psychological contradiction
         out.push_str(&format!(
-            "\n  Confidence: {}%  —  {}\n",
-            eng.confidence_score, eng.confidence_explanation
+            "\n  Safety verdict: {}\n",
+            eng.confidence_explanation
+        ));
+        out.push_str(&format!(
+            "  Classification confidence: {}%\n",
+            eng.confidence_score
         ));
         for reason in &eng.confidence_reasons {
             out.push_str(&format!("    {}\n", reason));
