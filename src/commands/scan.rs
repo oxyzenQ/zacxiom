@@ -60,4 +60,17 @@ pub fn run_scan(
     if verbose {
         println!("{}", display::render_table(&classified, "FILE DETAIL"));
     }
+
+    // Show next recommended command
+    let cleanable = classified
+        .iter()
+        .filter(|f| f.decision.is_cleanable(false, false))
+        .count();
+    if cleanable > 0 {
+        println!("\n  💡 Next: zacxiom plan  (read-only preview)");
+        println!("         zacxiom clean (safe files only)");
+    } else {
+        println!("\n  💡 Next: zacxiom clean --smart (includes low-risk files)");
+        println!("         zacxiom plan  (see what could be cleaned)");
+    }
 }

@@ -21,6 +21,21 @@ pub enum CacheDomain {
     Unknown,
 }
 
+impl CacheDomain {
+    /// Human-readable display name for summaries.
+    pub fn display_name(&self) -> &str {
+        match self {
+            CacheDomain::Browser => "Browser Cache",
+            CacheDomain::System => "System Cache",
+            CacheDomain::BuildArtifact => "Build Artifacts",
+            CacheDomain::PackageManager => "Package Cache",
+            CacheDomain::Developer => "Developer Tools",
+            CacheDomain::UserData => "User Data",
+            CacheDomain::Unknown => "Other",
+        }
+    }
+}
+
 impl std::fmt::Display for CacheDomain {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -101,3 +101,11 @@ if ! $SYSTEM_MODE; then
   echo "  💡 Tip: for system-wide install, use:"
   echo "     ./scripts/install.sh --system"
 fi
+
+echo ""
+echo -e "  ${CYAN}Next steps:${NC}"
+echo "    zacxiom scan       # inspect your system (safe, read-only)"
+echo "    zacxiom plan       # see what could be cleaned"
+echo "    zacxiom clean      # clean only safe files"
+echo ""
+echo "  No files are deleted until you run 'zacxiom clean'."

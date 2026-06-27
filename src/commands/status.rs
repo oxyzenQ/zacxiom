@@ -47,6 +47,19 @@ pub fn run_status() {
     if !snaps.is_empty() {
         println!("  Last snap : {}", snaps.first().unwrap());
     }
+    // Show most recent clean action
+    if let Some(last_clean) = hist
+        .records
+        .iter()
+        .filter(|r| r.action == "clean")
+        .max_by_key(|r| r.timestamp.clone())
+    {
+        println!(
+            "  Last clean: {} files ({})",
+            last_clean.files_removed,
+            &last_clean.timestamp[..10]
+        );
+    }
     println!(
         "  Safety    : {}",
         if safe.passed { "PASS" } else { "FAIL" }

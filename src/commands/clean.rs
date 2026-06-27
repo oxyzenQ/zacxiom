@@ -301,6 +301,35 @@ pub fn run_clean(
     }
     println!("  Snapshot:  {}", snap.id);
     println!("  Undo:      zacxiom undo --id {}", snap.id);
+    println!("  Stored in: ~/.cache/zacxiom/snapshots/");
+
+    // Show top-removed categories for user confidence
+    let removed_paths: std::collections::HashSet<&str> =
+        report.trash_paths.iter().map(|(p, _)| p.as_str()).collect();
+    let mut domain_counts: std::collections::HashMap<String, (usize, u64)> =
+        std::collections::HashMap::new();
+    for f in &classified {
+        if removed_paths.contains(f.path.as_str()) {
+            let name = crate::rules::CacheDomain::display_name(&f.cache_domain);
+            let entry = domain_counts.entry(name.to_string()).or_insert((0, 0));
+            entry.0 += 1;
+            entry.1 += f.size;
+        }
+    }
+    if !domain_counts.is_empty() {
+        let mut sorted: Vec<_> = domain_counts.into_iter().collect();
+        sorted.sort_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
+        println!();
+        println!("  Top removed:");
+        for (domain, (count, size)) in sorted.iter().take(5) {
+            println!(
+                "    {:<24} {:>6} files  {}",
+                domain,
+                count,
+                simulator::human_size(*size)
+            );
+        }
+    }
 
     report_errors(&report);
 }

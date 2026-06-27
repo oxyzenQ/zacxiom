@@ -31,8 +31,13 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
+#[command(
+    after_help = "💡 Quick start: zacxiom scan → zacxiom plan → zacxiom clean\n   All destructive commands are recoverable with zacxiom undo"
+)]
 pub enum Command {
     /// Scan filesystem for cache files and classify them
+    ///
+    /// Safe, read-only. The first step — discover what's on your system.
     Scan {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
@@ -46,19 +51,65 @@ pub enum Command {
         json: bool,
     },
 
-    /// Show full classified report
-    Report {
+    /// Plan cleanup — what is safe and recommended? (read-only, never deletes)
+    ///
+    /// Usage: zacxiom plan ~/.cache
+    ///        zacxiom plan target
+    ///        zacxiom plan node_modules
+    Plan {
+        /// Path to plan cleanup for
+        path: String,
+    },
+
+    /// Execute safe clean — removes files with trash-based recovery
+    ///
+    /// Safety levels:
+    ///   clean          — SAFE files only (strict, recommended for beginners)
+    ///   clean --smart  — SAFE + LOW_RISK (more aggressive, still recoverable)
+    ///   clean --force  — SAFE + LOW + MODERATE (requires explicit YES confirmation)
+    ///
+    /// Examples:
+    ///   zacxiom clean                    # conservative
+    ///   zacxiom clean --smart            # recommended for experienced users
+    ///   zacxiom clean --force            # maximum cleanup with confirmation
+    ///   zacxiom clean --dry-run --json   # preview as JSON
+    Clean {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
         #[arg(short = 'p', long, default_value = "dev")]
         profile: String,
+        /// Also clean LOW_RISK files (caches, build artifacts)
+        #[arg(long)]
+        smart: bool,
+        /// Also clean MODERATE files (requires YES confirmation)
+        #[arg(long)]
+        force: bool,
+        /// Preview only — show what WOULD be cleaned without deleting
+        #[arg(long)]
+        dry_run: bool,
+        /// Show individual file list (default: summary only)
+        #[arg(long)]
+        verbose: bool,
         #[arg(long)]
         json: bool,
     },
 
-    /// Dry-run simulation — see what WOULD happen
+    /// Restore files from a cleanup snapshot
+    ///
+    /// Without --id, restores the latest snapshot.
+    /// Usage: zacxiom undo --id snap-xxx
+    Undo {
+        /// Snapshot ID to restore (defaults to latest)
+        #[arg(short, long)]
+        id: Option<String>,
+    },
+
+    /// Show system status — health, history, snapshots, memory
+    Status,
+
+    /// Dry-run simulation — see what WOULD happen before running clean
     Simulate {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
@@ -70,30 +121,6 @@ pub enum Command {
         json: bool,
         #[arg(long)]
         verbose: bool,
-    },
-
-    /// Execute safe clean (only SAFE files unless --smart/--force)
-    Clean {
-        #[arg(short = 'P', long, num_args = 0..)]
-        paths: Vec<String>,
-        #[arg(short, long, default_value = "0")]
-        depth: usize,
-        #[arg(short = 'p', long, default_value = "dev")]
-        profile: String,
-        /// Also clean LOW_RISK files
-        #[arg(long)]
-        smart: bool,
-        /// Also clean MODERATE files
-        #[arg(long)]
-        force: bool,
-        /// Preview only — show what WOULD be cleaned without deleting
-        #[arg(long)]
-        dry_run: bool,
-        /// Show individual file list (default: summary only)
-        #[arg(long)]
-        verbose: bool,
-        #[arg(long)]
-        json: bool,
     },
 
     /// Explain why a path is safe/risky with ★★★★★ trust cards
@@ -108,26 +135,16 @@ pub enum Command {
         path: String,
     },
 
-    /// Restore files from a cleanup snapshot
-    ///
-    /// Without --id, restores the latest snapshot.
-    /// Usage: zacxiom undo --id snap-xxx
-    Undo {
-        /// Snapshot ID to restore (defaults to latest)
-        #[arg(short, long)]
-        id: Option<String>,
-    },
-    /// Show system status — health, history, snapshots, memory
-    Status,
-
-    /// Plan cleanup — what is safe and recommended? (read-only, never deletes)
-    ///
-    /// Usage: zacxiom plan ~/.cache
-    ///        zacxiom plan target
-    ///        zacxiom plan node_modules
-    Plan {
-        /// Path to plan cleanup for
-        path: String,
+    /// Show full classified report (same data as scan, more detail)
+    Report {
+        #[arg(short = 'P', long, num_args = 0..)]
+        paths: Vec<String>,
+        #[arg(short, long, default_value = "0")]
+        depth: usize,
+        #[arg(short = 'p', long, default_value = "dev")]
+        profile: String,
+        #[arg(long)]
+        json: bool,
     },
 
     /// Analyze unknown files — what dominates the Unknown bucket?
