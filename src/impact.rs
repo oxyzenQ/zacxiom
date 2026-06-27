@@ -199,11 +199,19 @@ fn classify_base_impact(
             });
             (
                 ImpactLevel::Critical,
-                "Not regenerable — user-authored content, must be backed up".into(),
-                "Permanent data loss. Not recoverable.".into(),
+                "Recoverable only from backup or version control".into(),
+                "Permanent loss of user-authored content".into(),
                 95,
             )
         }
+
+        // Temporary files — not regenerated, but also not important
+        Category::TemporaryFile => (
+            ImpactLevel::Low,
+            "Not regenerated — temporary data meant to be disposable".into(),
+            "No functional impact — applications create new temp files as needed".into(),
+            95,
+        ),
 
         cat if cat.is_cleanable() => {
             if eng.regenerable {

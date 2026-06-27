@@ -367,7 +367,7 @@ pub fn upgrade_workspace(eng: &mut ClassificationResult) -> bool {
         return false;
     }
 
-    // Check for project markers
+    // Check for project markers — only strong signals (manifests, .git)
     let markers: &[(&str, &str)] = &[
         ("Cargo.toml", "Rust project manifest"),
         ("package.json", "Node.js project manifest"),
@@ -394,15 +394,7 @@ pub fn upgrade_workspace(eng: &mut ClassificationResult) -> bool {
         }
     }
 
-    // Check for source code directories
-    let code_dirs: &[&str] = &["src", "lib", "include", "app"];
-    for dir in code_dirs {
-        if path.join(dir).is_dir() {
-            found_markers.push(format!("{}/ (source directory)", dir));
-        }
-    }
-
-    // Check for git repository
+    // Check for git version control
     if path.join(".git").exists() {
         found_markers.push(".git/ (version controlled)".into());
     }
@@ -441,15 +433,10 @@ pub fn upgrade_workspace(eng: &mut ClassificationResult) -> bool {
 
     // Artifact intelligence
     eng.created_by = "User — project initialized by developer".into();
-    eng.regenerated_by = "Not regenerable — must recreate from scratch or version control".into();
-    eng.depends_on = found_markers
-        .first()
-        .map(|m| m.split_once(' ').map(|s| s.0).unwrap_or(m))
-        .unwrap_or("project files")
-        .to_string();
+    eng.regenerated_by = "Requires backup or version control (git) to restore".into();
+    eng.depends_on = "project source files and version control history".into();
     eng.deletion_impact =
-        "Permanent loss of source code, configuration, and project history. Cannot be recovered."
-            .into();
+        "Permanent loss of source code and project history — not recoverable without backup".into();
     eng.classification_reasoning = found_markers
         .iter()
         .enumerate()
