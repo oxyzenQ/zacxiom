@@ -248,7 +248,7 @@ impl Category {
             Category::SourceDirectory => "Source Code Directory",
             Category::BuildManifest => "Package Manifest",
             Category::ProjectAsset => "Project Asset",
-            Category::ApplicationData => "Application Data",
+            Category::ApplicationData => "User Data / Application Data",
             Category::DockerStorage => "Docker Storage",
             Category::GameData => "Game Data",
             Category::AIModelCache => "AI Model Cache",

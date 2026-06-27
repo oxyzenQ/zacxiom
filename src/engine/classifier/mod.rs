@@ -163,13 +163,27 @@ pub fn classify(path: &Path) -> ClassificationResult {
             result
                 .reasons
                 .push("Git repository detected (.git directory present)".into());
-            // Set intel for git workspace
+            // Check if this has a remote origin (clone) or is local-only (init)
+            let has_remote = std::process::Command::new("git")
+                .args(["-C", &path.to_string_lossy(), "remote", "get-url", "origin"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if has_remote {
+                result.depends_on = "Remote git repository (origin configured)".to_string();
+                result.regenerated_by =
+                    "git clone from remote — local uncommitted work not regenerable".to_string();
+                result.deletion_impact =
+                    "Project source code permanently lost. Uncommitted work irrecoverable. Restore via git clone.".to_string();
+            } else {
+                result.depends_on = "Local Git repository — no remote configured".to_string();
+                result.regenerated_by =
+                    "Not regenerable — no remote to clone from, must restore from backup"
+                        .to_string();
+                result.deletion_impact =
+                    "Project source code and entire Git history permanently lost. Cannot be recovered.".to_string();
+            }
             result.created_by = "git init / git clone".to_string();
-            result.regenerated_by =
-                "git clone (from remote) — local work not regenerable".to_string();
-            result.depends_on = "Remote git repository".to_string();
-            result.deletion_impact =
-                "Project source code permanently lost. Restore from remote or backup.".to_string();
             matched = true;
         }
     }

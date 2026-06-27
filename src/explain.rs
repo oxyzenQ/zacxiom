@@ -270,10 +270,12 @@ fn render_category(
             Some("Safe to reclaim if disk space is critical. Otherwise keep — redownloading is expensive.".into()),
         ),
         Category::ApplicationData => (
-            "User application data — saved states, databases, user-generated content.",
-            "This is where applications store your actual data. Review file-by-file before deleting.".into(),
-            "Application data may be permanently lost. Some apps sync to cloud, others do not.".into(),
-            Some("Manual review required before cleaning.".into()),
+            "User data — may contain application states, personal files, or saved content.",
+            "This directory contains user-created or application-managed data. Review contents before deleting."
+                .into(),
+            "Application data, personal files, or preferences may be permanently lost. Some apps sync to cloud, others do not."
+                .into(),
+            Some("Manual review strongly recommended — not auto-cleanable.".into()),
         ),
         Category::DockerStorage => (
             "Docker image layers, build cache, and container storage.",

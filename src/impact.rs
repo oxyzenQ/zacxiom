@@ -238,6 +238,18 @@ fn classify_base_impact(
             70,
         ),
 
+        // Application data — stored states, user content, not regenerable
+        Category::ApplicationData
+        | Category::GameData
+        | Category::AIModelCache
+        | Category::DockerStorage => (
+            ImpactLevel::High,
+            "Cannot be regenerated automatically — may require backup, reinstall, or cloud sync"
+                .into(),
+            "Deleting may permanently remove application data, preferences, or saved states".into(),
+            70,
+        ),
+
         _ => {
             if eng.regenerable {
                 (
@@ -249,7 +261,7 @@ fn classify_base_impact(
             } else {
                 (
                     ImpactLevel::Medium,
-                    "Not regenerable".into(),
+                    "Cannot be regenerated automatically — requires manual recreation".into(),
                     eng.deletion_impact.clone(),
                     50,
                 )
