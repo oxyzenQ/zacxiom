@@ -1,11 +1,11 @@
 ────────────
-  ZACXIOM v10.0.0 STATUS
+  ZACXIOM <VERSION> STATUS
 ────────────
   Health    : Normal
-  History   : 1 records
-  Snapshots : 5 available
-  Memory    : 5 sessions, 1 trusted, 0 flagged
-  Stability : stabilized
-  Last snap : snap-37842
+  History   : <NUM> records
+  Snapshots : <NUM> available
+  Memory    : <NUM> sessions, <NUM> trusted, <NUM> flagged
+  Stability : <STABILITY>
+  Last snap : <SNAP-ID>
   Safety    : PASS
 ────────────

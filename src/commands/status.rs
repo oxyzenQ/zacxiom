@@ -10,7 +10,7 @@ use crate::profiles;
 use crate::safety;
 use crate::snapshot;
 
-pub fn run_status() {
+pub fn run_status(golden: bool) {
     let health = profiles::detect_health();
     let hist = history::History::load();
     let snaps = snapshot::Snapshot::list_all();
@@ -18,26 +18,39 @@ pub fn run_status() {
     let mem = memory::ContextMemory::load();
     let safe = safety::system_health_check();
 
+    let version = if golden {
+        "<VERSION>".to_string()
+    } else {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    };
+
     println!("────────────");
-    println!("  ZACXIOM v{} STATUS", env!("CARGO_PKG_VERSION"));
+    println!("  ZACXIOM {} STATUS", version);
     println!("────────────");
     println!("  Health    : {:?}", health);
-    println!("  History   : {} records", hist.records.len());
-    println!("  Snapshots : {} available", snaps.len());
-    println!(
-        "  Memory    : {} sessions, {} trusted, {} flagged",
-        mem.sessions,
-        mem.trusted_paths.len(),
-        mem.flagged_paths.len()
-    );
-    println!(
-        "  Stability : {}",
-        if mem.is_stabilized() {
-            "stabilized"
-        } else {
-            "learning"
-        }
-    );
+    if golden {
+        println!("  History   : <NUM> records");
+        println!("  Snapshots : <NUM> available");
+        println!("  Memory    : <NUM> sessions, <NUM> trusted, <NUM> flagged");
+        println!("  Stability : <STABILITY>");
+    } else {
+        println!("  History   : {} records", hist.records.len());
+        println!("  Snapshots : {} available", snaps.len());
+        println!(
+            "  Memory    : {} sessions, {} trusted, {} flagged",
+            mem.sessions,
+            mem.trusted_paths.len(),
+            mem.flagged_paths.len()
+        );
+        println!(
+            "  Stability : {}",
+            if mem.is_stabilized() {
+                "stabilized"
+            } else {
+                "learning"
+            }
+        );
+    }
     if !policy.protected_paths.is_empty() {
         println!(
             "  Policy    : {} user-protected paths",
@@ -45,10 +58,16 @@ pub fn run_status() {
         );
     }
     if !snaps.is_empty() {
-        println!("  Last snap : {}", snaps.first().unwrap());
+        if golden {
+            println!("  Last snap : <SNAP-ID>");
+        } else {
+            println!("  Last snap : {}", snaps.first().unwrap());
+        }
     }
-    // Show most recent clean action
-    if let Some(last_clean) = hist
+    // Show most recent clean action - masked in golden mode
+    if golden {
+        // Don't show dynamic last-clean in golden mode
+    } else if let Some(last_clean) = hist
         .records
         .iter()
         .filter(|r| r.action == "clean")

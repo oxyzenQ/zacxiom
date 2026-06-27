@@ -6,8 +6,13 @@
 use crate::snapshot;
 use std::path::{Path, PathBuf};
 
-pub fn run_doctor() {
-    println!("zacxiom v{} system check", env!("CARGO_PKG_VERSION"));
+pub fn run_doctor(golden: bool) {
+    let version = if golden {
+        "<VERSION>".to_string()
+    } else {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    };
+    println!("zacxiom {} system check", version);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━");
 
     let mut ok = 0;
@@ -70,13 +75,33 @@ pub fn run_doctor() {
         &format!("cannot write to {}", trash_dir.display())
     );
 
-    // Snapshots
-    let snaps = snapshot::Snapshot::list_all();
-    check_warn!(
-        "Snapshots present",
-        !snaps.is_empty(),
-        "no snapshots yet (normal on fresh install)"
-    );
+    // Snapshots — distinguish: no dir, dir unreadable, empty dir, has snaps
+    let snap_dir = snapshot::snapshot_dir();
+    let snaps = if snap_dir.exists() {
+        match std::fs::read_dir(&snap_dir) {
+            Ok(_) => snapshot::Snapshot::list_all(),
+            Err(e) => {
+                check!(
+                    "Snapshots accessible",
+                    false,
+                    &format!("cannot access {} ({})", snap_dir.display(), e)
+                );
+                vec![]
+            }
+        }
+    } else {
+        vec![]
+    };
+    if snap_dir.exists() && snaps.is_empty() && fail == 0 {
+        // dir exists and is readable, but no snap files — normal fresh install
+        check_warn!(
+            "Snapshots present",
+            false,
+            "no snapshots yet (normal on fresh install)"
+        );
+    } else if !snaps.is_empty() {
+        check_warn!("Snapshots present", true, "");
+    }
 
     // Home access
     let test_paths = [
@@ -136,6 +161,6 @@ mod tests {
     #[test]
     fn test_doctor_smoke() {
         // Just verify it doesn't panic
-        run_doctor();
+        run_doctor(false);
     }
 }

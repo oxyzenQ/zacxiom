@@ -1,4 +1,4 @@
-zacxiom v10.0.0 system check
+zacxiom <VERSION> system check
 ━━━━━━━━━━━━━━━━━━━━━━━━
   ✓  Rust runtime
   ✓  Config directory

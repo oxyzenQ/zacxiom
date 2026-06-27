@@ -53,12 +53,13 @@ pub enum Command {
 
     /// Plan cleanup — what is safe and recommended? (read-only, never deletes)
     ///
-    /// Usage: zacxiom plan ~/.cache
+    /// Usage: zacxiom plan              # defaults to HOME
+    ///        zacxiom plan ~/.cache
     ///        zacxiom plan target
     ///        zacxiom plan node_modules
     Plan {
-        /// Path to plan cleanup for
-        path: String,
+        /// Path to plan cleanup for (defaults to HOME)
+        path: Option<String>,
     },
 
     /// Execute safe clean — removes files with trash-based recovery
@@ -111,10 +112,18 @@ pub enum Command {
     },
 
     /// Show system status — health, history, snapshots, memory
-    Status,
+    Status {
+        /// Golden test mode — mask dynamic values for deterministic output
+        #[arg(long, hide = true)]
+        golden: bool,
+    },
 
     /// Run system health check — verify config, permissions, readiness
-    Doctor,
+    Doctor {
+        /// Golden test mode — mask dynamic values for deterministic output
+        #[arg(long, hide = true)]
+        golden: bool,
+    },
 
     /// Dry-run simulation — see what WOULD happen before running clean
     Simulate {

@@ -93,7 +93,36 @@ echo "  Binary : ${BIN_DIR}/zacxiom"
 echo "  Config : ${CONFIG_DIR}"
 echo "  Cache  : ${CACHE_DIR}"
 echo ""
-echo "  Verify: zacxiom -V"
+
+# ── Step 4: Auto-validate ──
+BIN="${BIN_DIR}/zacxiom"
+echo -e "${CYAN}Validating installation...${NC}"
+
+if [ -x "${BIN}" ]; then
+  echo -e "  ${GREEN}✓${NC} Binary executable"
+else
+  echo -e "  ${RED}✗${NC} Binary not executable"
+  exit 1
+fi
+
+# PATH check
+if command -v zacxiom >/dev/null 2>&1; then
+  echo -e "  ${GREEN}✓${NC} PATH detected"
+elif [ -x "${HOME}/.local/bin/zacxiom" ]; then
+  echo -e "  ${YELLOW}⚠${NC} PATH not detected — add ~/.local/bin to your PATH"
+else
+  echo -e "  ${YELLOW}⚠${NC} PATH check skipped"
+fi
+
+# Version check
+INSTALLED_VERSION=$("${BIN}" -V 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+if [ "${INSTALLED_VERSION}" != "unknown" ]; then
+  echo -e "  ${GREEN}✓${NC} Version verified: v${INSTALLED_VERSION}"
+else
+  echo -e "  ${YELLOW}⚠${NC} Could not verify version"
+fi
+
+echo ""
 echo "  Usage : zacxiom --help"
 
 if ! $SYSTEM_MODE; then
@@ -105,7 +134,7 @@ fi
 echo ""
 echo -e "  ${CYAN}Next steps:${NC}"
 echo "    zacxiom scan       # inspect your system (safe, read-only)"
-echo "    zacxiom plan       # see what could be cleaned"
+echo "    zacxiom plan       # see what could be cleaned (defaults to HOME)"
 echo "    zacxiom clean      # clean only safe files"
 echo ""
 echo "  No files are deleted until you run 'zacxiom clean'."

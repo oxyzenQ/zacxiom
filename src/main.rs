@@ -111,9 +111,17 @@ fn main() {
         }
 
         Command::Undo { id, list } => commands::run_undo(id, list),
-        Command::Status => commands::run_status(),
-        Command::Doctor => commands::run_doctor(),
-        Command::Plan { path } => commands::run_plan(path),
+        Command::Status { golden } => commands::run_status(golden),
+        Command::Doctor { golden } => commands::run_doctor(golden),
+        Command::Plan { path } => {
+            let target = path.unwrap_or_else(|| {
+                std::env::var_os("HOME")
+                    .unwrap_or_else(|| "/tmp".into())
+                    .to_string_lossy()
+                    .to_string()
+            });
+            commands::run_plan(target);
+        }
         Command::InspectUnknown {
             paths,
             depth,

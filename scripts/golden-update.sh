@@ -14,9 +14,9 @@ ZACXIOM=target/release/zacxiom
 echo "Regenerating golden files..."
 
 mkdir -p "$GOLDEN_DIR"
-"$ZACXIOM" help   > "$GOLDEN_DIR/help.txt"   2>&1
-"$ZACXIOM" status > "$GOLDEN_DIR/status.txt" 2>&1
-"$ZACXIOM" doctor > "$GOLDEN_DIR/doctor.txt" 2>&1
+"$ZACXIOM" help           > "$GOLDEN_DIR/help.txt"   2>&1
+"$ZACXIOM" status --golden > "$GOLDEN_DIR/status.txt" 2>&1
+"$ZACXIOM" doctor --golden > "$GOLDEN_DIR/doctor.txt" 2>&1
 
 echo "Done. Updated:"
 ls -la "$GOLDEN_DIR/"

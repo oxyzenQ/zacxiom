@@ -49,8 +49,8 @@ check_golden() {
 }
 
 check_golden "help"   "$ZACXIOM" help
-check_golden "status" "$ZACXIOM" status
-check_golden "doctor" "$ZACXIOM" doctor
+check_golden "status" "$ZACXIOM" status --golden
+check_golden "doctor" "$ZACXIOM" doctor --golden
 
 echo ""
 echo -e "  ${GREEN}Passed: ${PASS}${NC}  ${RED}Failed: ${FAIL}${NC}"

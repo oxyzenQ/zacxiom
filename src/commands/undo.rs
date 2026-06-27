@@ -67,13 +67,31 @@ pub fn run_undo(id: Option<String>, list_only: bool) {
 
     println!("Restoring from snapshot: {snap_id}");
     match snapshot::Snapshot::load(&snap_id) {
-        Ok(snap) => match snap.restore() {
-            Ok(n) => println!("Restored {n} files."),
-            Err(e) => {
-                eprintln!("Restore error: {e}");
-                std::process::exit(1);
+        Ok(snap) => {
+            let total = snap.entry_count();
+            let skipped = snap.skipped_count();
+            match snap.restore() {
+                Ok(0) => {
+                    if total == 0 && skipped > 0 {
+                        eprintln!("Nothing to restore — all {skipped} entries were skipped (never removed).");
+                    } else {
+                        eprintln!("Nothing to restore — trash files may have been already restored or cleaned.");
+                        eprintln!("Run 'zacxiom status' or 'zacxiom undo --list' to check available snapshots.");
+                    }
+                }
+                Ok(n) => {
+                    if skipped > 0 {
+                        println!("Restored {n} files ({} skipped — never removed).", skipped);
+                    } else {
+                        println!("Restored {n} files.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Restore error: {e}");
+                    std::process::exit(1);
+                }
             }
-        },
+        }
         Err(e) => {
             eprintln!("Failed to load snapshot: {e}");
             std::process::exit(1);

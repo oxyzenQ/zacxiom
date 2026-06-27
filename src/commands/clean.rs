@@ -90,9 +90,19 @@ pub fn run_clean(
             "safe"
         };
 
+        // Time estimate
+        let estimate_secs = cleanable.len() as f64 / 500.0;
+        let time_str = if estimate_secs < 1.0 || cleanable.len() < 10 {
+            "< 1 second".to_string()
+        } else if estimate_secs < 60.0 {
+            format!("~{:.0} seconds", estimate_secs.ceil())
+        } else {
+            format!("~{:.0} minutes", (estimate_secs / 60.0).ceil())
+        };
+
         println!();
-        println!("DRY RUN");
-        println!("───────");
+        println!("DRY RUN — Estimated Cleanup");
+        println!("───────────────────────────");
         println!(
             "  Mode: {mode} ({})",
             if force {
@@ -103,6 +113,9 @@ pub fn run_clean(
                 "★★★★★ only"
             }
         );
+        println!("  ≈ {} files", cleanable.len());
+        println!("  ≈ {} recovered", simulator::human_size(to_clean_size));
+        println!("  ≈ {}", time_str);
 
         // Space accounting: safe vs review vs total
         let owned_cleanable: Vec<rules::ClassifiedFile> =
@@ -191,21 +204,6 @@ pub fn run_clean(
                     name,
                     count,
                     simulator::human_size(*size)
-                );
-            }
-        }
-
-        // Time estimate
-        let estimate_secs = cleanable.len() as f64 / 500.0;
-        if cleanable.len() >= 100 {
-            if estimate_secs < 1.0 {
-                println!("\n  Estimated time: < 1 second");
-            } else if estimate_secs < 60.0 {
-                println!("\n  Estimated time: ~{:.0} seconds", estimate_secs.ceil());
-            } else {
-                println!(
-                    "\n  Estimated time: ~{:.0} minutes",
-                    (estimate_secs / 60.0).ceil()
                 );
             }
         }
