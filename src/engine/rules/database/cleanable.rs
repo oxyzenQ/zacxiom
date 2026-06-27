@@ -254,7 +254,7 @@ pub(crate) fn build_cleanable_rules() -> Vec<Rule> {
 
             created_by: "System/Application",
 
-            regenerated_by: "Not regenerable (temporary)",
+            regenerated_by: "Applications create new temporary files as needed — disposable by nature",
 
             depends_on: "None",
 

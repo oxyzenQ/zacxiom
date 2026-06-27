@@ -174,9 +174,9 @@ fn render_category(
             Some("Never delete without understanding consequences.".into()),
         ),
         Category::UserDocument => (
-            "Personal documents and downloaded files.",
+            "Personal documents, media, and downloaded files.",
             "These are your personal files — may contain irreplaceable content. Zacxiom does NOT auto-clean user content.".into(),
-            "Personal documents would be permanently deleted. Not recoverable from cache or cloud.".into(),
+            "Personal files would be permanently deleted. Not recoverable from cache or cloud.".into(),
             Some("Never auto-cleaned. Review each file before deleting.".into()),
         ),
         Category::UserMedia => (
@@ -217,8 +217,11 @@ fn render_category(
         ),
         Category::BuildCache => (
             "Build tool cache — compiled artifacts, dependency downloads.",
-            format!("Build tools regenerate these automatically. Safe to remove. {}", reasons),
-            "Next build may take longer while artifacts are regenerated.".into(),
+            format!(
+                "Generated build artifacts. Safe to delete because they can be recreated from project source code. {}",
+                reasons
+            ),
+            "Next build regenerates these from source. No permanent data loss.".into(),
             None,
         ),
         Category::CacheRegistry => (

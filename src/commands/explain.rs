@@ -32,9 +32,27 @@ pub fn run_explain(path: &str) {
         std::process::exit(1);
     }
 
+    // v10.1: Resolve symlinks to their target for accurate classification
+    let resolved = if target.is_symlink() {
+        match std::fs::read_link(&target) {
+            Ok(link_target) => {
+                let full_target = if link_target.is_absolute() {
+                    link_target
+                } else {
+                    target.parent().unwrap_or(Path::new(".")).join(&link_target)
+                };
+                // Canonicalize for clean path display
+                std::fs::canonicalize(&full_target).unwrap_or(full_target)
+            }
+            Err(_) => target.clone(),
+        }
+    } else {
+        target.clone()
+    };
+
     let ctx = RunContext::new("dev");
 
-    if target.is_file() {
+    if target.is_file() && !target.is_symlink() {
         // Single file — create a scan entry directly, never scan parent dir
         let size = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
         let entry = scanner::ScanEntry {
@@ -58,13 +76,23 @@ pub fn run_explain(path: &str) {
         return;
     }
 
+    // Directory or symlink — classify the RESOLVED path, not the symlink itself
+    let classify_target = if target != resolved {
+        println!("  Path:     {}", path);
+        println!("  Resolved: {}", resolved.display());
+        println!();
+        &resolved
+    } else {
+        &target
+    };
+
     // Directory — scan only that directory, not parent; use sufficient depth
-    let roots = vec![target];
+    let roots = vec![classify_target.clone()];
     let entries = scanner::scan(&roots, 8, 1, true);
     let threads = pipeline::optimal_threads(entries.len());
     let classified = pipeline::classify(entries, &ctx, threads);
 
-    let mut eng = crate::engine::classify(&PathBuf::from(path));
+    let mut eng = crate::engine::classify(classify_target);
     explain::upgrade_workspace(&mut eng);
     explain::fix_home_inheritance(&mut eng);
     boost_confidence_from_discovery(&mut eng);
