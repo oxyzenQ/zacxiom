@@ -37,7 +37,6 @@ echo "Packaging ${RELEASE_NAME}..."
 cp target/release/zacxiom "$OUT_DIR/"
 cp README.md "$OUT_DIR/"
 cp LICENSE "$OUT_DIR/"
-cp RELEASE_CHECKLIST.md "$OUT_DIR/" 2>/dev/null || echo "  (RELEASE_CHECKLIST.md not found — skipping)"
 
 # Create archive
 ARCHIVE="${RELEASE_NAME}.tar.gz"
