@@ -195,6 +195,21 @@ pub fn run_clean(
             }
         }
 
+        // Time estimate
+        let estimate_secs = cleanable.len() as f64 / 500.0;
+        if cleanable.len() >= 100 {
+            if estimate_secs < 1.0 {
+                println!("\n  Estimated time: < 1 second");
+            } else if estimate_secs < 60.0 {
+                println!("\n  Estimated time: ~{:.0} seconds", estimate_secs.ceil());
+            } else {
+                println!(
+                    "\n  Estimated time: ~{:.0} minutes",
+                    (estimate_secs / 60.0).ceil()
+                );
+            }
+        }
+
         // File list only with --verbose
         if verbose && !cleanable.is_empty() {
             println!("\n  FILES\n");

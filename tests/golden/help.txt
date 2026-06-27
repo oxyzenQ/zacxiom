@@ -1,0 +1,33 @@
+Safe-by-default filesystem cleanup with full explainability.
+Every decision is justified. Every action is logged.
+
+Usage: zacxiom [OPTIONS] [COMMAND]
+
+Commands:
+  scan                Scan filesystem for cache files and classify them
+  plan                Plan cleanup — what is safe and recommended? (read-only, never deletes)
+  clean               Execute safe clean — removes files with trash-based recovery
+  undo                Restore files from a cleanup snapshot
+  status              Show system status — health, history, snapshots, memory
+  doctor              Run system health check — verify config, permissions, readiness
+  simulate            Dry-run simulation — see what WOULD happen before running clean
+  explain             Explain why a path is safe/risky with ★★★★★ trust cards
+  report              Show full classified report (same data as scan, more detail)
+  inspect-unknown     Analyze unknown files — what dominates the Unknown bucket?
+  check-update        Check for latest upstream release
+  explain-confidence  Show complete confidence calculation for a path
+  explain-risk        Show detailed risk reasoning for a path
+  help                Print this message or the help of the given subcommand(s)
+
+Options:
+  -V, --version
+          Print version information
+
+      --check-update
+          Check for latest upstream release
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+💡 Quick start: zacxiom scan → zacxiom plan → zacxiom clean
+   All destructive commands are recoverable with zacxiom undo

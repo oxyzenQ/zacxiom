@@ -7,6 +7,7 @@
 
 pub mod check_update;
 pub mod clean;
+pub mod doctor;
 pub mod explain;
 pub mod explain_confidence;
 pub mod explain_risk;
@@ -19,6 +20,7 @@ pub mod undo;
 
 pub use check_update::check_update;
 pub use clean::run_clean;
+pub use doctor::run_doctor;
 pub use explain::run_explain;
 pub use explain_confidence::run_explain_confidence;
 pub use explain_risk::run_explain_risk;

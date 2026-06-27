@@ -110,8 +110,9 @@ fn main() {
             commands::run_explain(&path);
         }
 
-        Command::Undo { id } => commands::run_undo(id),
+        Command::Undo { id, list } => commands::run_undo(id, list),
         Command::Status => commands::run_status(),
+        Command::Doctor => commands::run_doctor(),
         Command::Plan { path } => commands::run_plan(path),
         Command::InspectUnknown {
             paths,

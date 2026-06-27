@@ -1,0 +1,30 @@
+[K  ✓ [SCAN ] Discovering files      (0.2s)
+[K  ⠋ [ANALYZE] Building context      [K  ✓ [ANALYZE] Building context       (2 threads) (0.3s)
+[K  ✓ [CLASSIFY] Evaluating risk        (2 threads) (0.5s)
+[K  ✓ [READY] Complete               (2 threads) (0.6s)
+
+
+
+DECISION SUMMARY
+────────────────
+  Files Found                1
+  Safe To Clean              0
+  Blocked                    1
+  Recoverable                0 B
+  Risk Level                 HIGH — most files blocked
+
+
+DOMAIN SUMMARY
+──────────────
+  Temporary Files              1 files      10 B  LOW
+
+
+CONFIDENCE BREAKDOWN
+────────────────────
+  ★★★   Review       1 (100%)
+  Safe to auto-clean:  0 files
+  With --smart:        0 files
+
+
+CLASSIFIER COVERAGE
+────────────────────────────────────────

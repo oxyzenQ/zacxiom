@@ -5,14 +5,61 @@
 
 use crate::snapshot;
 
-pub fn run_undo(id: Option<String>) {
+pub fn run_undo(id: Option<String>, list_only: bool) {
+    let all = snapshot::Snapshot::list_all();
+
+    if all.is_empty() {
+        eprintln!("No snapshots found. Nothing to undo.");
+        std::process::exit(1);
+    }
+
+    // List mode — show all snapshots
+    if list_only {
+        println!("Snapshots (newest first):");
+        for (i, snap) in all.iter().enumerate() {
+            let info = snapshot::Snapshot::load(snap).ok();
+            let files = info.as_ref().map(|s| s.entry_count()).unwrap_or(0);
+            let skipped = info.as_ref().map(|s| s.skipped_count()).unwrap_or(0);
+            let date = info
+                .as_ref()
+                .and_then(|s| s.created())
+                .unwrap_or("unknown".to_string());
+            println!(
+                "  {}. {}  {} files ({} skipped)  {}",
+                i + 1,
+                snap,
+                files,
+                skipped,
+                date
+            );
+        }
+        if all.len() == 1 {
+            println!("\n  Run: zacxiom undo");
+        } else {
+            println!("\n  Restore latest:     zacxiom undo");
+            println!(
+                "  Restore specific:   zacxiom undo --id {}",
+                all.first().unwrap()
+            );
+        }
+        return;
+    }
+
     let snap_id = match id {
         Some(ref i) => i.clone(),
         None => {
-            let all = snapshot::Snapshot::list_all();
-            if all.is_empty() {
-                eprintln!("No snapshots found. Nothing to undo.");
-                std::process::exit(1);
+            if all.len() > 1 {
+                let latest = all.first().unwrap();
+                let count = snapshot::Snapshot::load(latest)
+                    .map(|s| s.entry_count())
+                    .unwrap_or(0);
+                eprintln!(
+                    "Multiple snapshots ({}). Restoring the latest: {} ({} files).",
+                    all.len(),
+                    latest,
+                    count
+                );
+                eprintln!("Use --list to browse. Use --id to pick a specific one.");
             }
             all.first().unwrap().clone()
         }

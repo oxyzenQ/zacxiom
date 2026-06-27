@@ -1,0 +1,11 @@
+zacxiom v10.0.0 system check
+━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓  Rust runtime
+  ✓  Config directory
+  ✓  Cache directory writable
+  ✓  Trash directory writable
+  ✓  Snapshots present
+  ✓  Common cache paths accessible
+  ✓  Binary accessible
+━━━━━━━━━━━━━━━━━━━━━━━━
+  7 passed. System ready.

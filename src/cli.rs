@@ -100,14 +100,21 @@ pub enum Command {
     ///
     /// Without --id, restores the latest snapshot.
     /// Usage: zacxiom undo --id snap-xxx
+    ///        zacxiom undo --list
     Undo {
         /// Snapshot ID to restore (defaults to latest)
         #[arg(short, long)]
         id: Option<String>,
+        /// List all available snapshots
+        #[arg(short = 'l', long)]
+        list: bool,
     },
 
     /// Show system status — health, history, snapshots, memory
     Status,
+
+    /// Run system health check — verify config, permissions, readiness
+    Doctor,
 
     /// Dry-run simulation — see what WOULD happen before running clean
     Simulate {

@@ -37,6 +37,27 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Number of actually removed files (not skipped).
+    pub fn entry_count(&self) -> usize {
+        self.entries.iter().filter(|e| !e.skipped).count()
+    }
+
+    /// Number of skipped files in this snapshot.
+    pub fn skipped_count(&self) -> usize {
+        self.entries.iter().filter(|e| e.skipped).count()
+    }
+
+    /// Creation timestamp.
+    pub fn created(&self) -> Option<String> {
+        if self.created.is_empty() {
+            None
+        } else {
+            Some(self.created.clone())
+        }
+    }
+}
+
+impl Snapshot {
     pub fn new() -> Self {
         Snapshot {
             id: format!("snap-{}", std::process::id()),
@@ -145,7 +166,7 @@ impl Snapshot {
     }
 }
 
-fn snapshot_dir() -> PathBuf {
+pub fn snapshot_dir() -> PathBuf {
     let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
     PathBuf::from(home).join(".cache/zacxiom/snapshots")
 }
