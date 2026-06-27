@@ -485,7 +485,7 @@ pub fn fix_home_inheritance(eng: &mut ClassificationResult) {
             );
             eng.created_by = "User".into();
             eng.regenerated_by =
-                "Not regenerable — recoverable only from backup or version control".into();
+                "Cannot be regenerated automatically — recoverable only from backup or version control".into();
             eng.depends_on = "user-created files".into();
             eng.deletion_impact =
                 "Personal files or application data may be permanently lost".into();
