@@ -107,9 +107,15 @@ pub fn section_header(name: &str) -> String {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    /// Serialize env var access across parallel tests.
+    /// std::env::set_var is NOT thread-safe on Linux (calls setenv).
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_no_color_respects_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let prev = env::var("NO_COLOR").ok();
         env::set_var("NO_COLOR", "1");
         let ok = detect_color();
@@ -123,6 +129,7 @@ mod tests {
 
     #[test]
     fn test_purple_no_color_plain() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         // With no color, purple() returns plain text
         let prev = env::var("NO_COLOR").ok();
         env::set_var("NO_COLOR", "1");

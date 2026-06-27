@@ -43,7 +43,7 @@ echo ""
 # ── Format + Lint ──
 check "cargo fmt --check"           cargo fmt --check
 check "cargo clippy"                cargo clippy --all-targets --all-features -- -D warnings
-check "cargo test"                  cargo test
+check "cargo test"                  cargo test -- --test-threads=1
 check "cargo build --release"       cargo build --release --locked
 
 # ── Security ──
