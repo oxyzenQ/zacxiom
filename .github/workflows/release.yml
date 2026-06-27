@@ -46,7 +46,7 @@ jobs:
           ARCHIVE="zacxiom-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/zacxiom" dist/
-          cp README.md LICENSE docs/trademark.md dist/
+          cp README.md LICENSE TRADEMARK.md dist/
           tar czf "$ARCHIVE" -C dist .
           sha512sum "$ARCHIVE" > "$ARCHIVE.sha512sum"
           echo "archive=$ARCHIVE" >> "$GITHUB_ENV"
