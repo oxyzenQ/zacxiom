@@ -14,8 +14,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oxyzenQ/zacxiom/releases"><img src="https://img.shields.io/github/v/release/oxyzenQ/zacxiom?style=flat-square&color=7C3AED&labelColor=111827" alt="Release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-7C3AED?style=flat-square&labelColor=111827" alt="License"></a>
   <a href="https://ko-fi.com/rezky"><img src="https://img.shields.io/badge/Ko--fi-support-7C3AED?style=flat-square&logo=kofi&logoColor=white&labelColor=111827" alt="Support"></a>
 </p>
 
