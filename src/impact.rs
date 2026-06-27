@@ -208,7 +208,7 @@ fn classify_base_impact(
         // Temporary files — not regenerated, but also not important
         Category::TemporaryFile => (
             ImpactLevel::Low,
-            "Not regenerated — temporary data meant to be disposable".into(),
+            "Applications create new temporary files naturally during normal operation".into(),
             "No functional impact — applications create new temp files as needed".into(),
             95,
         ),
@@ -262,43 +262,29 @@ fn classify_base_impact(
 fn build_consequence_summary(
     level: ImpactLevel,
     affected: &[AffectedEntity],
-    regenerates: &str,
+    _regenerates: &str,
     breaks: &str,
 ) -> String {
+    let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
+    let who = if names.is_empty() {
+        String::new()
+    } else {
+        format!("Affects {}. ", names.join(", "))
+    };
     let b = breaks.trim_end_matches('.');
-    let r = regenerates.trim_end_matches('.');
+
     match level {
         ImpactLevel::Low => {
-            if affected.is_empty() {
-                format!("Minimal impact. {b}. Regeneration: {r}.")
-            } else {
-                let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
-                format!(
-                    "Low impact. Affects: {}. {b}. Regeneration: {r}.",
-                    names.join(", ")
-                )
-            }
+            format!("Minimal — {who}{b}.")
         }
         ImpactLevel::Medium => {
-            let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
-            format!(
-                "Moderate impact. Affects: {}. {b}. Restoration: {r}.",
-                names.join(", ")
-            )
+            format!("Moderate — {who}{b}.")
         }
         ImpactLevel::High => {
-            let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
-            format!(
-                "Significant impact. Affects: {}. {b}. {r}.",
-                names.join(", ")
-            )
+            format!("Significant — {who}{b}.")
         }
         ImpactLevel::Critical => {
-            let names: Vec<&str> = affected.iter().map(|a| a.name.as_str()).collect();
-            format!(
-                "CRITICAL — permanent damage. Affects: {}. {b}. {r}.",
-                names.join(", ")
-            )
+            format!("CRITICAL — deleting this file or directory causes permanent data loss. {who}Recovery depends on backups or version control.")
         }
     }
 }

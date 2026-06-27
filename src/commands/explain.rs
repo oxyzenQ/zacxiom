@@ -46,6 +46,7 @@ pub fn run_explain(path: &str) {
         let classified = pipeline::classify(entries, &ctx, threads);
         let mut eng = crate::engine::classify(&target);
         explain::upgrade_workspace(&mut eng);
+        explain::fix_home_inheritance(&mut eng);
         boost_confidence_from_discovery(&mut eng);
         println!(
             "{}",
@@ -65,6 +66,7 @@ pub fn run_explain(path: &str) {
 
     let mut eng = crate::engine::classify(&PathBuf::from(path));
     explain::upgrade_workspace(&mut eng);
+    explain::fix_home_inheritance(&mut eng);
     boost_confidence_from_discovery(&mut eng);
     println!(
         "{}",

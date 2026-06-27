@@ -446,6 +446,56 @@ pub fn upgrade_workspace(eng: &mut ClassificationResult) -> bool {
     true
 }
 
+/// If a path was classified via inheritance from HOME, upgrade the display
+/// so it doesn't misleadingly say 'User Home Directory' for subdirectories.
+pub fn fix_home_inheritance(eng: &mut ClassificationResult) {
+    if eng.category == Category::UserHomeRoot
+        && eng
+            .reasons
+            .iter()
+            .any(|r| r.contains("Inherited from parent"))
+    {
+        let path_str = eng.path.to_string_lossy();
+        let home = std::env::var_os("HOME")
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/home".to_string());
+
+        let depth = path_str.matches('/').count();
+        let home_depth = home.matches('/').count();
+        if depth > home_depth && path_str.starts_with(&home) {
+            eng.category = Category::ApplicationData;
+            eng.matched_by = "home-subdir-upgrade".into();
+            eng.confidence_score = 65;
+            eng.confidence = 0.65;
+            eng.risk_level = RiskLevel::Moderate;
+            eng.regenerable = false;
+            eng.confidence_explanation =
+                "Moderate Confidence — user directory under HOME, no project or cache markers"
+                    .into();
+            eng.confidence_reasons = vec![
+                "Located under user home directory".into(),
+                "No project or cache markers detected — assume personal files".into(),
+            ];
+            eng.reasons.clear();
+            eng.reasons.push(
+                "User directory under HOME — may contain user-created files or application data"
+                    .into(),
+            );
+            eng.created_by = "User".into();
+            eng.regenerated_by =
+                "Not regenerable — recoverable only from backup or version control".into();
+            eng.depends_on = "user-created files".into();
+            eng.deletion_impact =
+                "Personal files or application data may be permanently lost".into();
+            eng.classification_reasoning = vec![
+                "Located directly under your home directory".into(),
+                "No project manifests or build artifacts detected".into(),
+                "Treat as personal directory — review contents before cleaning".into(),
+            ];
+        }
+    }
+}
+
 /// v7.1: Artifact Intelligence — lifecycle and ownership
 pub fn render_card(exp: &Explanation, eng: Option<&crate::engine::ClassificationResult>) -> String {
     let mut out = String::new();
@@ -553,7 +603,10 @@ fn render_project_section(out: &mut String, eng: &crate::engine::ClassificationR
             out.push_str(&format!("  Reason:         {}\n", reason));
         }
 
-        out.push_str(&format!("  Confidence:     {}%\n", om.evidence.confidence));
+        out.push_str(&format!(
+            "  Ownership confidence:     {}%\n",
+            om.evidence.confidence
+        ));
         return;
     }
 
@@ -643,5 +696,8 @@ fn render_impact_section(out: &mut String, eng: &crate::engine::ClassificationRe
         out.push_str(&format!("  Summary:      {}\n", analysis.consequence));
     }
 
-    out.push_str(&format!("  Confidence:   {}%\n", analysis.confidence));
+    out.push_str(&format!(
+        "  Impact confidence:   {}%\n",
+        analysis.confidence
+    ));
 }
