@@ -156,6 +156,15 @@ pub fn analyze_impact(path: &Path, eng: &ClassificationResult) -> ImpactAnalysis
     }
 }
 
+/// Use eng.regenerated_by if available, fall back to a default.
+fn if_regenerated_by_or(eng: &ClassificationResult, default: &str) -> String {
+    if eng.regenerated_by.is_empty() {
+        default.to_string()
+    } else {
+        eng.regenerated_by.clone()
+    }
+}
+
 /// Classify base impact from engine category alone (before ownership enrichment).
 fn classify_base_impact(
     eng: &ClassificationResult,
@@ -199,7 +208,7 @@ fn classify_base_impact(
             });
             (
                 ImpactLevel::Critical,
-                "Recoverable only from backup or version control".into(),
+                if_regenerated_by_or(eng, "Recoverable only from backup or version control"),
                 "Permanent loss of user-authored content".into(),
                 95,
             )

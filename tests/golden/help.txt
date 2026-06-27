@@ -1,6 +1,8 @@
 Safe-by-default filesystem cleanup with full explainability.
 Every decision is justified. Every action is logged.
 
+Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal
+
 Usage: zacxiom [OPTIONS] [COMMAND]
 
 Commands:
