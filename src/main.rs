@@ -51,6 +51,27 @@ use clap::Parser;
 use cli::{Cli, Command};
 
 fn main() {
+    // Install global panic hook for test diagnostics.
+    // Captures backtrace on any panic, including during Drop/teardown.
+    std::panic::set_hook(Box::new(|info| {
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let msg = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic>".to_string());
+        eprintln!("\n━━━ PANIC ━━━");
+        eprintln!("  location : {loc}");
+        eprintln!("  message  : {msg}");
+        eprintln!("━━━━━━━━━━━━━━");
+        let bt = std::backtrace::Backtrace::force_capture();
+        eprintln!("{bt}");
+    }));
+
     color::init();
     let cli = Cli::parse();
     if cli.version {

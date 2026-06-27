@@ -22,6 +22,8 @@ if ! command -v cargo &>/dev/null; then
   . "$HOME/.cargo/env" 2>/dev/null || true
 fi
 
+export RUST_BACKTRACE=full
+
 cd "$(dirname "$0")/.."
 
 echo -e "${YELLOW}━━━ ZACXIOM CHECK-ALL ━━━${NC}"
@@ -44,7 +46,7 @@ FAILED=0
 check_step "fmt       " cargo fmt --all -- --check || FAILED=1
 check_step "clippy    " cargo clippy --all-targets --all-features -- -D warnings || FAILED=1
 check_step "build     " cargo build || FAILED=1
-check_step "test      " cargo test || FAILED=1
+check_step "test      " cargo test -- --test-threads=1 || FAILED=1
 if command -v cargo-deny >/dev/null 2>&1; then
   check_step "deny      " cargo deny check || FAILED=1
 elif cargo audit --version >/dev/null 2>&1; then
