@@ -6,7 +6,7 @@
 use crate::snapshot;
 use std::path::{Path, PathBuf};
 
-pub fn run_doctor(golden: bool) {
+pub fn run_doctor(golden: bool) -> bool {
     let version = if golden {
         "<VERSION>".to_string()
     } else {
@@ -128,13 +128,14 @@ pub fn run_doctor(golden: bool) {
     if fail > 0 {
         println!("  {} passed, {} warnings, {} failures", ok, warn, fail);
         println!("  ⚠  System not fully ready. Fix failures above.");
-        std::process::exit(1);
+        return false;
     } else if warn > 0 {
         println!("  {} passed, {} warnings (non-blocking)", ok, warn);
         println!("  ✓  System ready.");
     } else {
         println!("  {} passed. System ready.", ok);
     }
+    true
 }
 
 fn test_writable(dir: &Path) -> bool {
@@ -160,7 +161,11 @@ mod tests {
 
     #[test]
     fn test_doctor_smoke() {
-        // Just verify it doesn't panic
-        run_doctor(false);
+        // Ensure panic hook is installed (main() not called in tests)
+        crate::install_panic_hook();
+        // run_doctor returns false on failures but should not hit process::exit.
+        // In tests, writable/cache checks may fail depending on environment.
+        // The important thing is that it doesn't abort the process.
+        let _ok = run_doctor(false);
     }
 }

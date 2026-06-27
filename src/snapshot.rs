@@ -103,20 +103,33 @@ impl Snapshot {
     }
 
     /// List all available snapshot IDs, sorted newest-first by modification time.
+    /// Gracefully skips unreadable entries and broken symlinks.
     pub fn list_all() -> Vec<String> {
         let dir = snapshot_dir();
         if !dir.exists() {
             return vec![];
         }
         let mut snaps: Vec<(String, std::time::SystemTime)> = Vec::new();
-        if let Ok(entries) = fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with("snap-") {
-                    let mtime = entry.metadata().ok().and_then(|m| m.modified().ok());
-                    snaps.push((name, mtime.unwrap_or(std::time::UNIX_EPOCH)));
-                }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return vec![],
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("snap-") {
+                continue;
             }
+            // Use metadata() safely — skip entries that fail (broken symlinks, permissions)
+            let mtime = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            snaps.push((name, mtime));
         }
         // Sort newest-first by modification time
         snaps.sort_by_key(|b| std::cmp::Reverse(b.1));
