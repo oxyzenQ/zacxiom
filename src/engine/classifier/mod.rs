@@ -101,16 +101,38 @@ pub fn classify(path: &Path) -> ClassificationResult {
         result.regenerable = false;
         result.matched_by = "project-override".to_string();
         result.reasons.clear();
-        result.reasons.push(
-            "Project workspace detected inside Desktop/Documents — overriding location rule".into(),
-        );
-        // v7.3: Set intel for project workspace
+        result
+            .reasons
+            .push("Project workspace detected — overriding location-based classification".into());
+        // Check git remote for accurate depends_on
+        let has_remote = path.join(".git").exists()
+            && std::process::Command::new("git")
+                .args(["-C", &path.to_string_lossy(), "remote", "get-url", "origin"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+        if has_remote {
+            result.depends_on = "Remote git repository (origin configured)".to_string();
+            result.regenerated_by =
+                "git clone from remote — local uncommitted work not regenerable".to_string();
+            result.deletion_impact =
+                "Project source code permanently lost. Uncommitted work irrecoverable. Restore via git clone.".to_string();
+        } else if path.join(".git").exists() {
+            result.depends_on = "Local Git repository — no remote configured".to_string();
+            result.regenerated_by =
+                "Not regenerable — no remote to clone from, must restore from backup".to_string();
+            result.deletion_impact =
+                "Project source code and Git history permanently lost. Cannot be recovered."
+                    .to_string();
+        } else {
+            result.depends_on = "None".to_string();
+            result.regenerated_by =
+                "Not regenerable — project must be recreated or cloned".to_string();
+            result.deletion_impact =
+                "Project source code permanently lost. Must restore from backup or VCS remote."
+                    .to_string();
+        }
         result.created_by = "Developer".to_string();
-        result.regenerated_by = "Not regenerable — project must be recreated or cloned".to_string();
-        result.depends_on = "None".to_string();
-        result.deletion_impact =
-            "Project source code permanently lost. Must restore from backup or VCS remote."
-                .to_string();
         // Keep matched = true, updated category
     }
 
