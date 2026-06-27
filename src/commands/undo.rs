@@ -14,7 +14,7 @@ pub fn run_undo(id: Option<String>) {
                 eprintln!("No snapshots found. Nothing to undo.");
                 std::process::exit(1);
             }
-            all.last().unwrap().clone()
+            all.first().unwrap().clone()
         }
     };
 

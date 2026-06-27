@@ -222,6 +222,40 @@ pub fn run_clean(
     let trash_for_snap = trash_base.join(&snap.id);
     let report = cleaner::clean(&classified, smart, force, &trash_for_snap);
 
+    // v10.0.0-rc1: Don't create snapshot if nothing was removed
+    if report.files_removed == 0 {
+        // Clean up empty trash directory
+        let _ = std::fs::remove_dir_all(&trash_for_snap);
+
+        if json {
+            let out = serde_json::json!({
+                "snapshot_id": null,
+                "files_removed": 0,
+                "bytes_freed": 0,
+                "files_skipped": report.files_skipped,
+                "bytes_skipped": report.bytes_skipped,
+                "message": "No files were removed. No snapshot created.",
+            });
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            return;
+        }
+
+        println!();
+        println!("\nCLEAN COMPLETE");
+        println!("──────────────");
+        println!("  Removed:  0 files (0.00 B)");
+        println!(
+            "  Skipped:  {} files ({})",
+            report.files_skipped,
+            simulator::human_size(report.bytes_skipped)
+        );
+        println!("  No snapshot created (nothing to undo).");
+        if !report.errors.is_empty() {
+            report_errors(&report);
+        }
+        return;
+    }
+
     // Record trash paths in snapshot
     for (orig, trash) in &report.trash_paths {
         snap.add(orig, 0, Some(trash.clone()));
@@ -266,25 +300,30 @@ pub fn run_clean(
         );
     }
     println!("  Snapshot:  {}", snap.id);
-    println!("  Undo:      zacxiom undo {}", snap.id);
+    println!("  Undo:      zacxiom undo --id {}", snap.id);
 
-    if !report.errors.is_empty() {
-        // Show categorized error summary
-        if !report.error_counts.is_empty() {
-            let mut sorted: Vec<_> = report.error_counts.iter().collect();
-            sorted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-            println!();
-            println!("  Error summary:");
-            for (cat, count) in &sorted {
-                println!("    {cat}: {count}");
-            }
+    report_errors(&report);
+}
+
+/// Display categorized error summary + first 5 details.
+fn report_errors(report: &cleaner::CleanReport) {
+    if report.errors.is_empty() {
+        return;
+    }
+    if !report.error_counts.is_empty() {
+        let mut sorted: Vec<_> = report.error_counts.iter().collect();
+        sorted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+        println!();
+        println!("  Error summary:");
+        for (cat, count) in &sorted {
+            println!("    {cat}: {count}");
         }
-        println!("\n  Details:");
-        for e in report.errors.iter().take(5) {
-            println!("    {} → {}", e.path, e.error);
-        }
-        if report.errors.len() > 5 {
-            println!("    ... and {} more", report.errors.len() - 5);
-        }
+    }
+    println!("\n  Details:");
+    for e in report.errors.iter().take(5) {
+        println!("    {} → {}", e.path, e.error);
+    }
+    if report.errors.len() > 5 {
+        println!("    ... and {} more", report.errors.len() - 5);
     }
 }

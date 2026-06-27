@@ -81,27 +81,25 @@ impl Snapshot {
         serde_json::from_str(&data).map_err(|e| format!("parse: {e}"))
     }
 
-    /// List all available snapshot IDs.
+    /// List all available snapshot IDs, sorted newest-first by modification time.
     pub fn list_all() -> Vec<String> {
         let dir = snapshot_dir();
         if !dir.exists() {
             return vec![];
         }
-        fs::read_dir(dir)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter_map(|e| {
-                        let name = e.file_name().to_string_lossy().to_string();
-                        if name.starts_with("snap-") {
-                            Some(name)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        let mut snaps: Vec<(String, std::time::SystemTime)> = Vec::new();
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("snap-") {
+                    let mtime = entry.metadata().ok().and_then(|m| m.modified().ok());
+                    snaps.push((name, mtime.unwrap_or(std::time::UNIX_EPOCH)));
+                }
+            }
+        }
+        // Sort newest-first by modification time
+        snaps.sort_by_key(|b| std::cmp::Reverse(b.1));
+        snaps.into_iter().map(|(name, _)| name).collect()
     }
 
     /// Restore files from a snapshot using trash directory.
