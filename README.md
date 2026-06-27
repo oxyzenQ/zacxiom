@@ -97,16 +97,6 @@ See [docs/RULES.md](docs/RULES.md) for the complete hardened safety specificatio
 
 ---
 
-## Version
-
-```text
-zacxiom v7.0.0
-Build: linux-x86_64
-Copyright: (c) 2026 rezky_nightky (oxyzenQ)
-License: GPL-3.0
-Source: https://github.com/oxyzenQ/zacxiom
-```
-
 ## Intellectual Property
 
 zacxiom is the exclusive intellectual property of **rezky_nightky (oxyzenQ)**.
