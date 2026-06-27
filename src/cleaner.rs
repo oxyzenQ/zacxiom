@@ -9,6 +9,7 @@
 //! Every action is logged (H3).
 
 use crate::rules::ClassifiedFile;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +22,8 @@ pub struct CleanReport {
     pub bytes_skipped: u64,
     pub trash_paths: Vec<(String, String)>, // (original_path, trash_path)
     pub errors: Vec<CleanError>,
+    /// Categorized error counts for summary display.
+    pub error_counts: HashMap<String, usize>,
 }
 
 #[derive(Debug)]
@@ -45,6 +48,7 @@ pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool, trash_dir: &Pat
         bytes_skipped: 0,
         trash_paths: Vec::new(),
         errors: Vec::new(),
+        error_counts: HashMap::new(),
     };
 
     // Ensure trash directory exists
@@ -97,21 +101,34 @@ pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool, trash_dir: &Pat
                                     ));
                                 }
                                 Err(rm_err) => {
-                                    // Copied to trash but couldn't remove original — clean up trash copy
+                                    // Copied to trash but can't remove original.
+                                    // Clean up the trash copy — don't leave duplicates.
                                     let _ = fs::remove_file(&trash_path);
+                                    let cat = categorize_error(&rm_err.to_string());
+                                    report
+                                        .error_counts
+                                        .entry(cat.clone())
+                                        .and_modify(|c| *c += 1)
+                                        .or_insert(1);
                                     report.errors.push(CleanError {
                                         path: file.path.clone(),
                                         error: format!(
-                                            "Copied to trash but cannot remove original: {rm_err}"
+                                            "Skipped ({cat}): file preserved at original location"
                                         ),
                                     });
                                 }
                             }
                         }
                         Err(cp_err) => {
+                            let cat = categorize_error(&cp_err.to_string());
+                            report
+                                .error_counts
+                                .entry(cat.clone())
+                                .and_modify(|c| *c += 1)
+                                .or_insert(1);
                             report.errors.push(CleanError {
                                 path: file.path.clone(),
-                                error: format!("Cannot move to trash: {cp_err}"),
+                                error: format!("Skipped ({cat}): {cp_err}"),
                             });
                         }
                     }
@@ -136,7 +153,25 @@ fn build_trash_path(trash_dir: &Path, original_path: &str) -> PathBuf {
     trash_dir.join(sanitized)
 }
 
-/// Format a clean report for display.
+/// Categorize an OS error string into a user-friendly label.
+fn categorize_error(err_msg: &str) -> String {
+    let lower = err_msg.to_lowercase();
+    if lower.contains("permission") {
+        "Permission denied".into()
+    } else if lower.contains("read-only") {
+        "Read-only filesystem".into()
+    } else if lower.contains("not found") || lower.contains("no such file") {
+        "Already removed".into()
+    } else if lower.contains("broken") || lower.contains("symlink") {
+        "Broken symlink".into()
+    } else if lower.contains("text file busy") || lower.contains("in use") {
+        "File in use".into()
+    } else {
+        "Unknown".into()
+    }
+}
+
+/// Format a clean report for display with categorized error summary.
 pub fn format_clean_report(report: &CleanReport) -> String {
     let mut out = String::new();
 
@@ -156,8 +191,24 @@ pub fn format_clean_report(report: &CleanReport) -> String {
 
     if !report.errors.is_empty() {
         out.push_str(&format!("\n  Errors: {}\n", report.errors.len()));
-        for err in &report.errors {
+        // Show categorized summary first
+        if !report.error_counts.is_empty() {
+            let mut sorted: Vec<_> = report.error_counts.iter().collect();
+            sorted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+            for (cat, count) in &sorted {
+                out.push_str(&format!("    {cat}: {count}\n"));
+            }
+            out.push('\n');
+        }
+        // Then show first 5 individual errors
+        for err in report.errors.iter().take(5) {
             out.push_str(&format!("    {} → {}\n", err.path, err.error));
+        }
+        if report.errors.len() > 5 {
+            out.push_str(&format!(
+                "    ... and {} more errors\n",
+                report.errors.len() - 5
+            ));
         }
     }
 

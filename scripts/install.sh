@@ -2,24 +2,35 @@
 # Copyright (C) 2026 rezky_nightky
 # SPDX-License-Identifier: GPL-3.0-only
 
-# install.sh - Build and install zacxiom for the current user.
-# Usage: ./scripts/install.sh
+# install.sh - Build and install zacxiom.
+#
+# Usage:
+#   ./scripts/install.sh           # user install → ~/.local/bin
+#   ./scripts/install.sh --system  # system install → /usr/local/bin (needs sudo for copy only)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PREFIX="${PREFIX:-$HOME/.local}"
-BIN_DIR="${PREFIX}/bin"
+SYSTEM_MODE=false
+if [[ "${1:-}" == "--system" ]]; then
+  SYSTEM_MODE=true
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${CYAN}━━━ zacxiom install ━━━${NC}"
+if $SYSTEM_MODE; then
+  echo -e "${CYAN}━━━ zacxiom install (system) ━━━${NC}"
+else
+  echo -e "${CYAN}━━━ zacxiom install (user) ━━━${NC}"
+fi
 echo ""
 
-# Ensure cargo is available
+# ── Step 1: Build (ALWAYS as user, NEVER with sudo) ──
+# Ensure cargo is available in the current user's environment
 if ! command -v cargo &>/dev/null; then
   if [ -f "$HOME/.cargo/env" ]; then
     . "$HOME/.cargo/env"
@@ -29,25 +40,36 @@ if ! command -v cargo &>/dev/null; then
   fi
 fi
 
-# Build release
 echo "Building release binary..."
 cargo build --release --locked
 echo -e "  ${GREEN}✓${NC} Build complete"
 echo ""
 
-# Install binary without privilege escalation.
-echo "Installing to ${BIN_DIR}..."
-mkdir -p "$BIN_DIR"
-install -m 755 target/release/zacxiom "$BIN_DIR/zacxiom"
+# ── Step 2: Install ──
+if $SYSTEM_MODE; then
+  BIN_DIR="/usr/local/bin"
+  echo "Need root to install into ${BIN_DIR}"
+
+  if command -v sudo &>/dev/null; then
+    echo -e "  ${YELLOW}→ sudo install -Dm755 target/release/zacxiom ${BIN_DIR}/zacxiom${NC}"
+    sudo install -Dm755 target/release/zacxiom "$BIN_DIR/zacxiom"
+  else
+    echo -e "${RED}Error: sudo not found. Run as root or install without --system.${NC}"
+    exit 1
+  fi
+else
+  BIN_DIR="${PREFIX:-$HOME/.local}/bin"
+  echo "Installing to ${BIN_DIR}..."
+  mkdir -p "$BIN_DIR"
+  install -m 755 target/release/zacxiom "$BIN_DIR/zacxiom"
+fi
 echo -e "  ${GREEN}✓${NC} Installed: ${BIN_DIR}/zacxiom"
 echo ""
 
-# Set up config directory
+# ── Step 3: Config + cache (user dirs, even for system install) ──
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zacxiom"
 mkdir -p "$CONFIG_DIR"
-echo "Config directory: $CONFIG_DIR"
 
-# Create default policy if not exists
 if [ ! -f "$CONFIG_DIR/policy.json" ]; then
   cat > "$CONFIG_DIR/policy.json" << 'EOF'
 {
@@ -60,9 +82,10 @@ EOF
   echo -e "  ${GREEN}✓${NC} Default policy created"
 fi
 
-# Create cache directory
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/zacxiom"
 mkdir -p "$CACHE_DIR"
+echo "Config directory: $CONFIG_DIR"
+echo "Cache directory:  $CACHE_DIR"
 
 echo ""
 echo -e "${GREEN}━━━ zacxiom installed ━━━${NC}"
@@ -72,3 +95,9 @@ echo "  Cache  : ${CACHE_DIR}"
 echo ""
 echo "  Verify: zacxiom -V"
 echo "  Usage : zacxiom --help"
+
+if ! $SYSTEM_MODE; then
+  echo ""
+  echo "  💡 Tip: for system-wide install, use:"
+  echo "     ./scripts/install.sh --system"
+fi

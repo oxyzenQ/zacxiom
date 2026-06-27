@@ -108,6 +108,10 @@ pub enum Command {
         path: String,
     },
 
+    /// Restore files from a cleanup snapshot
+    ///
+    /// Without --id, restores the latest snapshot.
+    /// Usage: zacxiom undo --id snap-xxx
     Undo {
         /// Snapshot ID to restore (defaults to latest)
         #[arg(short, long)]

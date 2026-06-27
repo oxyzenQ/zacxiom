@@ -269,9 +269,22 @@ pub fn run_clean(
     println!("  Undo:      zacxiom undo {}", snap.id);
 
     if !report.errors.is_empty() {
-        println!("\n  Errors:");
-        for e in &report.errors {
+        // Show categorized error summary
+        if !report.error_counts.is_empty() {
+            let mut sorted: Vec<_> = report.error_counts.iter().collect();
+            sorted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+            println!();
+            println!("  Error summary:");
+            for (cat, count) in &sorted {
+                println!("    {cat}: {count}");
+            }
+        }
+        println!("\n  Details:");
+        for e in report.errors.iter().take(5) {
             println!("    {} → {}", e.path, e.error);
+        }
+        if report.errors.len() > 5 {
+            println!("    ... and {} more", report.errors.len() - 5);
         }
     }
 }
