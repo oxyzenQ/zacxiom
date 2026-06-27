@@ -45,7 +45,7 @@ pub fn run_status() {
         );
     }
     if !snaps.is_empty() {
-        println!("  Last snap : {}", snaps.last().unwrap());
+        println!("  Last snap : {}", snaps.first().unwrap());
     }
     println!(
         "  Safety    : {}",
