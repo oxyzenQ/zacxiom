@@ -194,9 +194,27 @@ pub fn trash_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+
+    /// RAII guard that restores HOME env var on drop.
+    struct HomeGuard(Option<std::ffi::OsString>);
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(home) => env::set_var("HOME", home),
+                None => env::remove_var("HOME"),
+            }
+        }
+    }
 
     #[test]
     fn test_snapshot_create_and_save() {
+        // Use a temp dir as HOME so the test doesn't depend on
+        // ~/.cache/zacxiom/snapshots/ being writable (stale root-owned dirs).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _guard = HomeGuard(env::var_os("HOME"));
+        env::set_var("HOME", tmp.path());
+
         let mut snap = Snapshot::new();
         snap.add(
             "/tmp/test-file.txt",
