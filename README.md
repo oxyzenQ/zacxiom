@@ -115,7 +115,7 @@ See [docs/RULES.md](docs/RULES.md) for the complete hardened safety specificatio
 
 ```bash
 # Verify release integrity
-sha512sum -c zacxiom-v12.0.0-linux-amd64.tar.gz.sha512
+sha512sum -c zacxiom-v12.0.1-linux-amd64.tar.gz.sha512
 ```
 
 ## Intellectual Property
