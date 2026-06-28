@@ -78,6 +78,9 @@ pub enum Decision {
     Moderate,
     HighRisk,
     Protected,
+    /// v11: Active developer environment — currently in use, never clean.
+    /// Risk: ★★★★★ Critical. "Never clean what the developer is actively using."
+    ProtectedActiveEnvironment,
 }
 
 impl Decision {
@@ -88,6 +91,7 @@ impl Decision {
             Decision::Moderate => force,
             Decision::HighRisk => force, // v10: --force allows HighRisk after confirmation
             Decision::Protected => false, // never
+            Decision::ProtectedActiveEnvironment => false, // never — active env
         }
     }
 }

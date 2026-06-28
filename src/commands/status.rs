@@ -57,6 +57,21 @@ pub fn run_status(golden: bool) {
             policy.protected_paths.len()
         );
     }
+    // v11: Snapshot storage reporting
+    let (snap_count, snap_total_size) = snapshot::total_snapshot_size();
+    if golden {
+        println!("  Snapshots : <NUM>");
+        println!("  Disk usage: <SIZE>");
+    } else {
+        println!("  Snapshots : {snap_count}");
+        if snap_count > 0 {
+            println!(
+                "  Disk usage: {}",
+                crate::simulator::human_size(snap_total_size)
+            );
+        }
+    }
+
     if !snaps.is_empty() {
         if golden {
             println!("  Last snap : <SNAP-ID>");

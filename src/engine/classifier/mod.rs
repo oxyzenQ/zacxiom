@@ -10,7 +10,13 @@ use std::path::Path;
 /// Fast classification without confidence scoring (v6.3.1).
 /// Returns (category_display_string, confidence).
 /// v7.2: Supports parent-child inheritance for scan pipeline consistency.
+/// v11: Active environment protection — checks if path is in an active SDK/toolchain.
 pub fn classify_fast(path: &Path) -> (&'static str, u8) {
+    // v11: Active environment protection — highest priority check
+    if crate::environment::is_active_environment(path).is_some() {
+        return (Category::ProtectedActiveEnvironment.display(), 100);
+    }
+
     let lower = path.to_string_lossy().to_lowercase();
     let rules = super::rules::rule_database();
     for rule in rules {

@@ -41,7 +41,7 @@ impl DecisionSummary {
                     recoverable += f.size;
                 }
                 Decision::HighRisk | Decision::Moderate => blocked += 1,
-                Decision::Protected => prot += 1,
+                Decision::Protected | Decision::ProtectedActiveEnvironment => prot += 1,
             }
         }
 

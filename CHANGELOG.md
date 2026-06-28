@@ -2,6 +2,39 @@
 
 All notable changes to zacxiom.
 
+## [v11.0.0] — 2026-06-28
+
+### Added — Active Environment Protection
+- **Active Environment Protection**: Zacxiom now detects active developer environments
+  (Rust toolchains, Python venvs, Node.js runtimes, Go SDKs, Java JDKs, and more)
+  before building the clean plan. Active environments are NEVER cleaned.
+- New decision tier: `ProtectedActiveEnvironment` — risk ★★★★★ Critical.
+  "Never clean what the developer is actively using."
+- Environment detectors for: Rust (rustup, cargo), Python (venv, conda, pyenv, uv),
+  Node.js (nvm, fnm, volta), Go (GOROOT/GOPATH), Java (JAVA_HOME, sdkman),
+  Bun, Deno, Zig, LLVM, and cargo-installed binaries.
+- Recently-used file protection (24h default window).
+
+### Added — Snapshot Management
+- `zacxiom snapshot list` — list all snapshots with ID, size, creation date, age.
+- `zacxiom snapshot delete <id>` — delete a single snapshot.
+- `zacxiom snapshot prune --keep N` — keep newest N, delete older.
+- `zacxiom snapshot prune --older-than 30d` — age-based pruning.
+- `zacxiom snapshot purge --confirm "DELETE ALL"` — delete ALL snapshots
+  and trash files. Requires exact confirmation string (no yes/no).
+- Snapshot age and size calculation methods.
+
+### Added — Storage Reporting
+- `zacxiom status` now displays snapshot count and total disk usage.
+
+### Changed
+- `Decision` enum gains `ProtectedActiveEnvironment` variant — never cleanable.
+- `Category` gains `ProtectedActiveEnvironment` variant — always protected.
+- Classifier pipeline (`classify_fast` + `classify`) checks active environments
+  before any other classification.
+- Pipeline decision override ensures active environments are never downgraded
+  by later classification layers.
+
 ## [v10.0.0] — 2026-06-27
 
 ### Added

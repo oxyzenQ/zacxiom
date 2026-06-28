@@ -121,6 +121,7 @@ pub fn confidence(file: &ClassifiedFile) -> Tier {
         },
         Decision::HighRisk => Tier::Low,
         Decision::Protected => Tier::Protected,
+        Decision::ProtectedActiveEnvironment => Tier::Protected,
     }
 }
 

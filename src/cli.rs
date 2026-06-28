@@ -199,4 +199,49 @@ pub enum Command {
         /// Path to analyze
         path: String,
     },
+
+    /// Manage cleanup snapshots — list, delete, prune, purge
+    ///
+    /// Usage:
+    ///   zacxiom snapshot list
+    ///   zacxiom snapshot delete <id>
+    ///   zacxiom snapshot prune --keep N
+    ///   zacxiom snapshot prune --older-than 30d
+    ///   zacxiom snapshot purge --confirm "DELETE ALL"
+    Snapshot {
+        #[command(subcommand)]
+        action: Option<SnapshotAction>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SnapshotAction {
+    /// List all snapshots with size, creation date, and age
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a snapshot by ID
+    Delete {
+        /// Snapshot ID to delete
+        id: String,
+        /// Force deletion without confirmation
+        #[arg(long)]
+        force: bool,
+    },
+    /// Prune old snapshots
+    Prune {
+        /// Keep only the newest N snapshots
+        #[arg(long)]
+        keep: Option<usize>,
+        /// Delete snapshots older than threshold (e.g. "30d", "7d", "24h")
+        #[arg(long)]
+        older_than: Option<String>,
+    },
+    /// Delete ALL snapshots permanently
+    Purge {
+        /// Confirmation string — must be exactly "DELETE ALL"
+        #[arg(long)]
+        confirm: Option<String>,
+    },
 }

@@ -106,6 +106,11 @@ pub fn simulate(
                 &mut report.protected_count,
                 &mut report.protected_size,
             ),
+            Decision::ProtectedActiveEnvironment => (
+                "PROTECTED",
+                &mut report.protected_count,
+                &mut report.protected_size,
+            ),
         };
 
         *count_field += 1;

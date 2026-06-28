@@ -216,6 +216,7 @@ fn status_label(d: &Decision) -> &'static str {
         Decision::Moderate => "CAUTION",
         Decision::HighRisk => "BLOCKED",
         Decision::Protected => "PROTECTED",
+        Decision::ProtectedActiveEnvironment => "PROTECTED",
     }
 }
 
@@ -226,6 +227,7 @@ fn action_label(d: &Decision) -> &'static str {
         Decision::Moderate => "FORCE",
         Decision::HighRisk => "BLOCKED",
         Decision::Protected => "NEVER",
+        Decision::ProtectedActiveEnvironment => "NEVER",
     }
 }
 

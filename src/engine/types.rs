@@ -97,6 +97,14 @@ pub enum Category {
     InstalledSoftware,
 
     // ═══════════════════════════════════════════════════════════
+    // ACTIVE ENVIRONMENT — v11. Never cleanable.
+    // Currently active or recently used developer environment.
+    // "Never clean what the developer is actively using."
+    // ═══════════════════════════════════════════════════════════
+    /// Protected active environment — SDK, toolchain, or runtime in use.
+    ProtectedActiveEnvironment,
+
+    // ═══════════════════════════════════════════════════════════
     // PROJECT ASSET — User-authored content.
     // Never auto-cleanable. Deleting means permanent data loss.
     // ═══════════════════════════════════════════════════════════
@@ -159,6 +167,8 @@ impl Category {
             | Category::ToolchainInstallation
             | Category::InstalledSoftware => ArtifactFamily::InstalledSoftware,
 
+            Category::ProtectedActiveEnvironment => ArtifactFamily::System, // v11: treated as system-level protection
+
             Category::ProjectWorkspace
             | Category::SourceDirectory
             | Category::BuildManifest
@@ -214,6 +224,7 @@ impl Category {
                 | Category::BuildManifest
                 | Category::ProjectAsset
                 | Category::InstalledSoftware
+                | Category::ProtectedActiveEnvironment
         )
     }
 
@@ -252,6 +263,7 @@ impl Category {
             Category::DockerStorage => "Docker Storage",
             Category::GameData => "Game Data",
             Category::AIModelCache => "AI Model Cache",
+            Category::ProtectedActiveEnvironment => "Protected Active Environment",
             Category::Unknown => "Unknown",
         }
     }

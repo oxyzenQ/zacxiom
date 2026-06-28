@@ -191,6 +191,88 @@ pub fn trash_dir() -> PathBuf {
     PathBuf::from(home).join(".cache/zacxiom/trash")
 }
 
+/// Delete a snapshot by ID (metadata file only, not trash files).
+pub fn delete_snapshot(id: &str) -> Result<(), String> {
+    let path = snapshot_dir().join(id);
+    if !path.exists() {
+        return Err(format!("Snapshot {id} not found"));
+    }
+    std::fs::remove_file(&path).map_err(|e| format!("Cannot delete {id}: {e}"))
+}
+
+impl Snapshot {
+    /// Delete this snapshot's metadata file.
+    pub fn delete(id: &str) -> Result<(), String> {
+        delete_snapshot(id)
+    }
+
+    /// Calculate total size of this snapshot in bytes.
+    pub fn total_size_bytes(&self) -> u64 {
+        self.entries
+            .iter()
+            .filter(|e| !e.skipped)
+            .map(|e| e.size)
+            .sum()
+    }
+}
+
+/// Get human-readable age string for a snapshot.
+pub fn snapshot_age(id: &str) -> String {
+    let secs = snapshot_age_secs(id);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let age_secs = now.saturating_sub(secs);
+
+    if age_secs < 60 {
+        format!("{}s ago", age_secs)
+    } else if age_secs < 3600 {
+        format!("{}m ago", age_secs / 60)
+    } else if age_secs < 86400 {
+        format!("{}h ago", age_secs / 3600)
+    } else {
+        let days = age_secs / 86400;
+        if days < 7 {
+            format!("{}d ago", days)
+        } else {
+            format!("{}w ago", days / 7)
+        }
+    }
+}
+
+/// Get snapshot creation timestamp as seconds since epoch.
+pub fn snapshot_age_secs(id: &str) -> u64 {
+    let path = snapshot_dir().join(id);
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        if let Ok(snap) = serde_json::from_str::<Snapshot>(&data) {
+            return snap.created.parse::<u64>().unwrap_or(0);
+        }
+    }
+    // Fallback: use file mtime
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if let Ok(mtime) = meta.modified() {
+            return mtime
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+        }
+    }
+    0
+}
+
+/// Calculate total storage used by all snapshots.
+pub fn total_snapshot_size() -> (usize, u64) {
+    let all = Snapshot::list_all();
+    let mut total: u64 = 0;
+    for id in &all {
+        if let Ok(snap) = Snapshot::load(id) {
+            total += snap.total_size_bytes();
+        }
+    }
+    (all.len(), total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

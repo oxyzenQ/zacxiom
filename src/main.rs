@@ -22,6 +22,7 @@ mod display;
 mod domain;
 mod ecosystem;
 mod engine;
+mod environment;
 mod errors;
 mod evidence;
 mod execution_order;
@@ -164,6 +165,34 @@ fn main() {
         Command::CheckUpdate => commands::check_update(),
         Command::ExplainConfidence { path } => commands::run_explain_confidence(path),
         Command::ExplainRisk { path } => commands::run_explain_risk(path),
+
+        Command::Snapshot { action } => {
+            let action = action.unwrap_or_else(|| {
+                eprintln!("Usage: zacxiom snapshot <list|delete|prune|purge>");
+                std::process::exit(1);
+            });
+            match action {
+                cli::SnapshotAction::List { json } => commands::run_snapshot_list(json),
+                cli::SnapshotAction::Delete { id, force } => {
+                    commands::run_snapshot_delete(&id, force)
+                }
+                cli::SnapshotAction::Prune { keep, older_than } => match (keep, older_than) {
+                    (Some(n), None) => commands::run_snapshot_prune_keep(n),
+                    (None, Some(age)) => commands::run_snapshot_prune_older_than(&age),
+                    (None, None) => {
+                        eprintln!("Use --keep N or --older-than TIMESPAN (e.g. 30d)");
+                        std::process::exit(1);
+                    }
+                    (Some(_), Some(_)) => {
+                        eprintln!("Use --keep OR --older-than, not both");
+                        std::process::exit(1);
+                    }
+                },
+                cli::SnapshotAction::Purge { confirm } => {
+                    commands::run_snapshot_purge(&confirm.unwrap_or_default());
+                }
+            }
+        }
     }
 }
 

@@ -82,6 +82,8 @@ fn category_to_tier(cat: &Category) -> Tier {
         | Category::BrowserCache
         | Category::TemporaryFile => Tier::Maximum,
 
+        Category::ProtectedActiveEnvironment => Tier::Protected,
+
         Category::Unknown => Tier::Moderate,
     }
 }
@@ -333,6 +335,12 @@ fn render_category(
             "Can be reinstalled by the toolchain manager, but this requires significant download time and bandwidth. This is NOT build cache — it is installed development tooling. Deleting it means your compiler disappears.".into(),
             "The compiler and tools are removed. All builds will fail until the toolchain is reinstalled. Reinstall may take several minutes and hundreds of MB to several GB.".into(),
             Some("Not recommended for auto-clean. Use --smart to reclaim. Otherwise keep — reinstalling is expensive.".into()),
+        ),
+        Category::ProtectedActiveEnvironment => (
+            "Active developer environment — currently in use.",
+            "This is a currently active or recently used developer SDK, toolchain, or runtime. Deleting active tooling breaks the developer workflow immediately. Never cleaned.".into(),
+            "The compiler, interpreter, or runtime would stop working immediately. Active builds and development sessions would fail. Reinstall required.".into(),
+            Some("Never clean. This is an active development environment. 'Never clean what the developer is actively using.'".into()),
         ),
         Category::Unknown => (
             "Storage that may be safe to clean after review.",
