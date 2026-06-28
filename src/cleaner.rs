@@ -94,6 +94,9 @@ pub fn clean(
         return report;
     }
 
+    // v12: batch counter for incremental snapshot saves
+    let mut moves_since_save: usize = 0;
+
     for file in files {
         if !file.decision.is_cleanable(smart, force) {
             report.files_skipped += 1;
@@ -127,13 +130,16 @@ pub fn clean(
                     trash_path: trash_path.to_string_lossy().to_string(),
                     actual_size,
                 });
-                // v12: save snapshot incrementally — survives kill -9 mid-clean
+                // v12: batched incremental save — safe + performant
                 snap.add(
                     &file.path,
                     actual_size,
                     Some(trash_path.to_string_lossy().to_string()),
                 );
-                save_snapshot_quiet(snap, snap_path);
+                moves_since_save += 1;
+                if moves_since_save.is_multiple_of(SNAPSHOT_SAVE_BATCH) {
+                    save_snapshot_quiet(snap, snap_path);
+                }
             }
             Err(_e) => {
                 // Cross-filesystem: try copy + remove
@@ -148,13 +154,16 @@ pub fn clean(
                                     trash_path: trash_path.to_string_lossy().to_string(),
                                     actual_size,
                                 });
-                                // v12: save snapshot incrementally
+                                // v12: batched incremental save
                                 snap.add(
                                     &file.path,
                                     actual_size,
                                     Some(trash_path.to_string_lossy().to_string()),
                                 );
-                                save_snapshot_quiet(snap, snap_path);
+                                moves_since_save += 1;
+                                if moves_since_save.is_multiple_of(SNAPSHOT_SAVE_BATCH) {
+                                    save_snapshot_quiet(snap, snap_path);
+                                }
                             }
                             Err(rm_err) => {
                                 // Copied to trash but can't remove original.
@@ -192,6 +201,11 @@ pub fn clean(
         }
     }
 
+    // v12: final flush — save remaining files (last batch < 100)
+    if !moves_since_save.is_multiple_of(SNAPSHOT_SAVE_BATCH) {
+        save_snapshot_quiet(snap, snap_path);
+    }
+
     report
 }
 
@@ -205,11 +219,17 @@ fn build_trash_path(trash_dir: &Path, original_path: &str) -> PathBuf {
     trash_dir.join(format!("{hash:016x}"))
 }
 
-/// Save snapshot to disk silently — used for incremental saving during clean.
+/// Batched incremental snapshot save — fires every N file moves.
+/// Balances recovery safety (survives kill -9) with performance.
+const SNAPSHOT_SAVE_BATCH: usize = 100;
+
+/// Save snapshot to disk using atomic temp+rename.
 /// Errors are ignored (best-effort; the final save is authoritative).
 fn save_snapshot_quiet(snap: &Snapshot, path: &Path) {
     if let Ok(json) = serde_json::to_string_pretty(snap) {
-        let _ = fs::write(path, json);
+        let tmp = path.with_extension("tmp");
+        let _ = fs::write(&tmp, json);
+        let _ = fs::rename(&tmp, path);
     }
 }
 
