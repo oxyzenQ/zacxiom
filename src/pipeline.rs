@@ -205,18 +205,20 @@ pub fn classify(
                                 "Downloaded artifact: regenerable but expensive to restore".into(),
                             );
                         }
+                    }
 
-                        // v11: Active Environment Protection
-                        // Override ANY decision to ProtectedActiveEnvironment
-                        // if the file is inside an active SDK, toolchain, or runtime.
-                        if let Some(active_env) = crate::environment::is_active_environment(&e.path) {
-                            scored.decision = rules::Decision::ProtectedActiveEnvironment;
-                            scored.risk_reasons.push(format!(
-                                "Active environment: {} — {}",
-                                active_env.name, active_env.stack
-                            ));
-                            scored.risk_score = 1.0;
-                        }
+                    // v11: Active Environment Protection
+                    // Applies to ALL decisions, not just Safe.
+                    // Override ANY decision to ProtectedActiveEnvironment
+                    // if the file is inside an active SDK, toolchain, or runtime.
+                    // Must run AFTER toolchain/LowRisk overrides above.
+                    if let Some(active_env) = crate::environment::is_active_environment(&e.path) {
+                        scored.decision = rules::Decision::ProtectedActiveEnvironment;
+                        scored.risk_reasons.push(format!(
+                            "Active environment: {} — {}",
+                            active_env.name, active_env.stack
+                        ));
+                        scored.risk_score = 1.0;
                     }
                     counter.fetch_add(1, Ordering::Relaxed);
                     scored

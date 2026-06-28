@@ -14,6 +14,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// Information about a detected active environment.
 #[derive(Debug, Clone)]
@@ -44,11 +45,22 @@ impl Default for RecentUseConfig {
     }
 }
 
+/// Cached active environments — computed once, reused across the pipeline.
+static CACHED_ENVIRONMENTS: OnceLock<Vec<ActiveEnvironment>> = OnceLock::new();
+
+/// Cached set of protected paths for fast lookup.
+static CACHED_PROTECTED_PATHS: OnceLock<HashSet<PathBuf>> = OnceLock::new();
+
 /// Detect all active developer environments on the system.
-///
-/// Returns a list of active environments with their protected paths.
-/// These paths must NEVER be cleaned, regardless of other classification.
+/// Results are cached — subsequent calls return the same data.
 pub fn detect_active_environments() -> Vec<ActiveEnvironment> {
+    CACHED_ENVIRONMENTS
+        .get_or_init(detect_active_environments_inner)
+        .clone()
+}
+
+/// Compute active environments (uncached, called once by OnceLock).
+fn detect_active_environments_inner() -> Vec<ActiveEnvironment> {
     let mut envs = Vec::new();
 
     detect_rust(&mut envs);
@@ -65,15 +77,19 @@ pub fn detect_active_environments() -> Vec<ActiveEnvironment> {
     envs
 }
 
-/// Get the set of all protected paths from active environments.
+/// Get the set of all protected paths from active environments (cached).
 pub fn protected_paths() -> HashSet<PathBuf> {
-    detect_active_environments()
-        .into_iter()
-        .map(|e| e.path)
-        .collect()
+    CACHED_PROTECTED_PATHS
+        .get_or_init(|| {
+            detect_active_environments()
+                .into_iter()
+                .map(|e| e.path)
+                .collect()
+        })
+        .clone()
 }
 
-/// Check if a path is within an active environment.
+/// Check if a path is within an active environment (cached).
 pub fn is_active_environment(path: &Path) -> Option<ActiveEnvironment> {
     let envs = detect_active_environments();
     let canonical = canonicalize_lossy(path);
@@ -122,18 +138,24 @@ fn detect_rust(envs: &mut Vec<ActiveEnvironment>) {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
+        // Protect the active toolchain directory itself
         envs.push(ActiveEnvironment {
             name: format!("Rust Toolchain ({tc_name})"),
             path: toolchain_dir,
             stack: "rust".to_string(),
             detected_by: "rustup show active-toolchain".to_string(),
         });
-    }
 
-    // Also protect the entire rustup toolchains directory parent
-    let toolchains_root = rustup_home.join("toolchains");
-    if toolchains_root.exists() && !envs.iter().any(|e| e.path == toolchains_root) {
-        // Only protect if any toolchain is found (otherwise empty dir)
+        // v11.0.1: Also protect the ENTIRE rustup home directory.
+        // settings.toml, update-hashes/, and toolchains/ are all required
+        // for rustup to function. Removing settings.toml alone breaks
+        // the default toolchain configuration.
+        envs.push(ActiveEnvironment {
+            name: "Rustup Home (active toolchain present)".to_string(),
+            path: rustup_home.clone(),
+            stack: "rust".to_string(),
+            detected_by: "rustup active toolchain requires entire rustup home".to_string(),
+        });
     }
 
     // Protect cargo home

@@ -35,7 +35,17 @@ pub fn run_status(golden: bool) {
         println!("  Stability : <STABILITY>");
     } else {
         println!("  History   : {} records", hist.records.len());
-        println!("  Snapshots : {} available", snaps.len());
+        // v11: Snapshot count with disk usage
+        let (snap_count, snap_total_size) = snapshot::total_snapshot_size();
+        if snap_count > 0 {
+            println!(
+                "  Snapshots : {} available ({})",
+                snap_count,
+                crate::simulator::human_size(snap_total_size)
+            );
+        } else {
+            println!("  Snapshots : {} available", snap_count);
+        }
         println!(
             "  Memory    : {} sessions, {} trusted, {} flagged",
             mem.sessions,
@@ -56,20 +66,6 @@ pub fn run_status(golden: bool) {
             "  Policy    : {} user-protected paths",
             policy.protected_paths.len()
         );
-    }
-    // v11: Snapshot storage reporting
-    let (snap_count, snap_total_size) = snapshot::total_snapshot_size();
-    if golden {
-        println!("  Snapshots : <NUM>");
-        println!("  Disk usage: <SIZE>");
-    } else {
-        println!("  Snapshots : {snap_count}");
-        if snap_count > 0 {
-            println!(
-                "  Disk usage: {}",
-                crate::simulator::human_size(snap_total_size)
-            );
-        }
     }
 
     if !snaps.is_empty() {
