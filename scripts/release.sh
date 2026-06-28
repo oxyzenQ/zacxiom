@@ -43,14 +43,14 @@ ARCHIVE="${RELEASE_NAME}.tar.gz"
 tar -czf "target/${ARCHIVE}" -C "$OUT_DIR" .
 
 # Generate SHA-512 checksum
-(cd target && sha512sum "${ARCHIVE}" > "${ARCHIVE}.sha512")
+(cd target && sha512sum "${ARCHIVE}" > "${ARCHIVE}.sha512sum")
 echo -e "  ${GREEN}✓${NC} Archive: target/${ARCHIVE}"
-echo -e "  ${GREEN}✓${NC} Checksum: target/${ARCHIVE}.sha512"
+echo -e "  ${GREEN}✓${NC} Checksum: target/${ARCHIVE}.sha512sum"
 echo ""
 
 # Verify checksum
 echo "Verifying checksum..."
-(cd target && sha512sum -c "${ARCHIVE}.sha512")
+(cd target && sha512sum -c "${ARCHIVE}.sha512sum")
 echo -e "  ${GREEN}✓${NC} Checksum verified"
 echo ""
 
@@ -63,6 +63,6 @@ done
 echo ""
 echo -e "${GREEN}━━━ release ready ━━━${NC}"
 echo "  Archive:  target/${ARCHIVE}"
-echo "  Checksum: target/${ARCHIVE}.sha512"
+echo "  Checksum: target/${ARCHIVE}.sha512sum"
 echo ""
 echo "  Next: create GitHub Release and upload both files"

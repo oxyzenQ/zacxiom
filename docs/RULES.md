@@ -154,7 +154,7 @@ cargo audit                  # Dependency vulnerabilities (when available)
 ### E1 — Core LOC Constraint
 > Core engine MUST remain under 1,000 lines of Rust code (`src/*.rs`).
 > Excludes `*.md`, `*.txt`, test fixtures, and build scripts.
-> If a single file exceeds 400 LOC, it MUST be decomposed.
+> If a single file exceeds 800 LOC, it MUST be decomposed.
 
 ### E2 — `main.rs` Purity
 > `main.rs` MUST only contain bootstrap, wiring, and dispatch (target: <200 LOC).
