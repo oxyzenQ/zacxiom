@@ -2,6 +2,21 @@
 
 All notable changes to zacxiom.
 
+## [v11.1.1] — 2026-06-28
+
+### Fixed
+- Version consistency: single authoritative version source (Cargo.toml)
+- Category display names: "Developer Tools" → "Developer Cache",
+  "User Data" → "Application Cache" (more accurate for regenerable cache)
+- Snapshot "not found" error now shows actionable message
+
+### Changed
+- Removed dead `execute_sequentially()` deletion path — single deletion engine
+- Full classifier now checks active environments (parity with classify_fast)
+- TOCTOU hardening: re-stats files at move time, records actual sizes
+- SHA-256 hash-based trash filenames (avoids NAME_MAX for deep paths)
+- Snapshot records actual bytes moved, not scanned estimates
+
 ## [v11.0.0] — 2026-06-28
 
 ### Added — Active Environment Protection

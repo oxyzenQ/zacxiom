@@ -29,8 +29,8 @@ impl CacheDomain {
             CacheDomain::System => "System Cache",
             CacheDomain::BuildArtifact => "Build Artifacts",
             CacheDomain::PackageManager => "Package Cache",
-            CacheDomain::Developer => "Developer Tools",
-            CacheDomain::UserData => "User Data",
+            CacheDomain::Developer => "Developer Cache",
+            CacheDomain::UserData => "Application Cache",
             CacheDomain::Unknown => "Other",
         }
     }

@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "zacxiom"
-version = "11.0.0"
+version = "11.1.1"
 dependencies = [
  "clap",
  "libc",
