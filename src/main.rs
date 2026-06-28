@@ -100,29 +100,45 @@ fn main() {
     match command {
         Command::Scan {
             paths,
+            positional_paths,
             depth,
             min_size,
             profile,
             json,
-        } => commands::run_scan(paths, depth, min_size, json, false, &profile),
+        } => {
+            let mut all_paths = paths;
+            all_paths.extend(positional_paths);
+            commands::run_scan(all_paths, depth, min_size, json, false, &profile)
+        }
 
         Command::Report {
             paths,
+            positional_paths,
             depth,
             profile,
             json,
-        } => commands::run_scan(paths, depth, 1, json, true, &profile),
+        } => {
+            let mut all_paths = paths;
+            all_paths.extend(positional_paths);
+            commands::run_scan(all_paths, depth, 1, json, true, &profile)
+        }
 
         Command::Simulate {
             paths,
+            positional_paths,
             depth,
             profile,
             json,
             verbose,
-        } => commands::run_simulate(paths, depth, json, verbose, &profile),
+        } => {
+            let mut all_paths = paths;
+            all_paths.extend(positional_paths);
+            commands::run_simulate(all_paths, depth, json, verbose, &profile)
+        }
 
         Command::Clean {
             paths,
+            positional_paths,
             depth,
             profile,
             smart,
@@ -130,7 +146,13 @@ fn main() {
             dry_run,
             verbose,
             json,
-        } => commands::run_clean(paths, depth, smart, force, dry_run, verbose, json, &profile),
+        } => {
+            let mut all_paths = paths;
+            all_paths.extend(positional_paths);
+            commands::run_clean(
+                all_paths, depth, smart, force, dry_run, verbose, json, &profile,
+            )
+        }
 
         Command::Explain { path } => {
             if path.is_empty() {

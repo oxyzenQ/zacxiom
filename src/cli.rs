@@ -40,8 +40,12 @@ pub enum Command {
     ///
     /// Safe, read-only. The first step — discover what's on your system.
     Scan {
+        /// Paths to scan (e.g. zacxiom scan ~/.cache ~/.npm)
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
+        /// Positional paths (alternative: zacxiom scan ~/.cache)
+        #[arg(num_args = 0.., trailing_var_arg = true)]
+        positional_paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
         #[arg(short = 'm', long, default_value = "1")]
@@ -78,6 +82,9 @@ pub enum Command {
     Clean {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
+        /// Positional paths (alternative: zacxiom clean ~/.cache)
+        #[arg(num_args = 0.., trailing_var_arg = true)]
+        positional_paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
         #[arg(short = 'p', long, default_value = "dev")]
@@ -130,6 +137,9 @@ pub enum Command {
     Simulate {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
+        /// Positional paths
+        #[arg(num_args = 0.., trailing_var_arg = true)]
+        positional_paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
         #[arg(short = 'p', long, default_value = "dev")]
@@ -156,6 +166,9 @@ pub enum Command {
     Report {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
+        /// Positional paths
+        #[arg(num_args = 0.., trailing_var_arg = true)]
+        positional_paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
         #[arg(short = 'p', long, default_value = "dev")]

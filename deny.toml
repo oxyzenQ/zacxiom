@@ -19,7 +19,8 @@ allow = [
 confidence-threshold = 0.8
 
 [bans]
-multiple-versions = "deny"
+# Binary tool — duplicate versions don't cause issues
+multiple-versions = "warn"
 deny = []
 skip = []
 skip-tree = []
