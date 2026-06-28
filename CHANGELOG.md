@@ -2,6 +2,27 @@
 
 All notable changes to zacxiom.
 
+## [v12.0.0] — 2026-06-28
+
+### Added — Interrupt Recovery
+- Snapshot saved incrementally during clean — survives kill -9 mid-clean.
+  Previously snapshot was written only after ALL files were moved.
+  Now each successful file move immediately persists to the snapshot file.
+  If process is killed, partial snapshot allows undo of moved files.
+
+### Validated (destructive testing)
+- Symlink attack: `cache → /etc` never followed or cleaned
+- Parallel stress: 10 concurrent scans, no panics, no deadlocks
+- Permission nightmare: chmod 0, root-owned files handled gracefully
+- Undo integrity: sha256 before/after clean→undo verified identical
+- Fuzz paths: emoji, unicode, 200-char filenames, spaces — no panics
+- Cross-device: tmpfs rename → copy+remove fallback verified
+
+### Changed
+- Category display: "Developer Tools"→"Developer Cache", "User Data"→"Application Cache"
+- cleaner::clean() accepts snapshot reference for incremental saves
+- Clean snapshot now persisted before any output (minimizes data loss window)
+
 ## [v11.1.1] — 2026-06-28
 
 ### Fixed

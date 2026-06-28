@@ -233,7 +233,17 @@ pub fn run_clean(
     let trash_base = snapshot::trash_dir();
     let mut snap = snapshot::Snapshot::new();
     let trash_for_snap = trash_base.join(&snap.id);
-    let report = cleaner::clean(&classified, smart, force, &trash_for_snap);
+    let snap_dir = snapshot::snapshot_dir();
+    let _ = std::fs::create_dir_all(&snap_dir);
+    let snap_path = snap_dir.join(&snap.id);
+    let report = cleaner::clean(
+        &classified,
+        smart,
+        force,
+        &trash_for_snap,
+        &mut snap,
+        &snap_path,
+    );
 
     // v10.0.0-rc1: Don't create snapshot if nothing was removed
     if report.files_removed == 0 {
@@ -269,20 +279,8 @@ pub fn run_clean(
         return;
     }
 
-    // Record trash paths in snapshot with actual (re-statted) sizes
-    for entry in &report.trash_entries {
-        snap.add(
-            &entry.original_path,
-            entry.actual_size,
-            Some(entry.trash_path.clone()),
-        );
-    }
-    // Record skipped files for auditing
-    for f in &classified {
-        if !f.decision.is_cleanable(smart, force) {
-            snap.add_skipped(&f.path, f.size);
-        }
-    }
+    // v12: Snapshot already populated incrementally by cleaner::clean().
+    // Save the final authoritative version (incremental saves were best-effort).
     let _snap_path = snap.save().unwrap_or_default();
 
     if json {

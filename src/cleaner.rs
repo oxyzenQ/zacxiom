@@ -14,6 +14,7 @@
 //!   - Snapshot gets actual bytes moved, not scanned estimates
 
 use crate::rules::ClassifiedFile;
+use crate::snapshot::Snapshot;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,10 +53,21 @@ pub struct CleanError {
 /// Actual size is recorded in the trash entry, not the scanned estimate.
 /// Trash filenames use SHA-256 hash to avoid NAME_MAX failures.
 ///
+/// v12: `snap` is populated incrementally as files are moved.
+/// If the process is killed mid-clean, the snapshot already contains
+/// all entries for files that were successfully moved — undo can recover.
+///
 /// - `smart`: also clean LowRisk files
 /// - `force`: also clean Moderate files (after confirmation is handled by CLI)
 /// - Protected files are NEVER cleaned regardless of flags.
-pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool, trash_dir: &Path) -> CleanReport {
+pub fn clean(
+    files: &[ClassifiedFile],
+    smart: bool,
+    force: bool,
+    trash_dir: &Path,
+    snap: &mut Snapshot,
+    snap_path: &Path,
+) -> CleanReport {
     let mut report = CleanReport {
         files_removed: 0,
         bytes_freed: 0,
@@ -115,6 +127,13 @@ pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool, trash_dir: &Pat
                     trash_path: trash_path.to_string_lossy().to_string(),
                     actual_size,
                 });
+                // v12: save snapshot incrementally — survives kill -9 mid-clean
+                snap.add(
+                    &file.path,
+                    actual_size,
+                    Some(trash_path.to_string_lossy().to_string()),
+                );
+                save_snapshot_quiet(snap, snap_path);
             }
             Err(_e) => {
                 // Cross-filesystem: try copy + remove
@@ -129,6 +148,13 @@ pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool, trash_dir: &Pat
                                     trash_path: trash_path.to_string_lossy().to_string(),
                                     actual_size,
                                 });
+                                // v12: save snapshot incrementally
+                                snap.add(
+                                    &file.path,
+                                    actual_size,
+                                    Some(trash_path.to_string_lossy().to_string()),
+                                );
+                                save_snapshot_quiet(snap, snap_path);
                             }
                             Err(rm_err) => {
                                 // Copied to trash but can't remove original.
@@ -177,6 +203,14 @@ fn build_trash_path(trash_dir: &Path, original_path: &str) -> PathBuf {
     original_path.hash(&mut hasher);
     let hash = hasher.finish();
     trash_dir.join(format!("{hash:016x}"))
+}
+
+/// Save snapshot to disk silently — used for incremental saving during clean.
+/// Errors are ignored (best-effort; the final save is authoritative).
+fn save_snapshot_quiet(snap: &Snapshot, path: &Path) {
+    if let Ok(json) = serde_json::to_string_pretty(snap) {
+        let _ = fs::write(path, json);
+    }
 }
 
 /// Categorize an OS error string into a user-friendly label.
@@ -262,12 +296,19 @@ mod tests {
         }
     }
 
+    /// Helper: create a temp snapshot for testing.
+    fn test_snap(tmp: &TempDir) -> (Snapshot, PathBuf) {
+        let snap_path = tmp.path().join("test-snapshot.json");
+        (Snapshot::new(), snap_path)
+    }
+
     #[test]
     fn test_clean_safe_only() {
         let tmp = TempDir::new().unwrap();
         let file_path = tmp.path().join("safe_file.txt");
         fs::write(&file_path, b"hello world").unwrap();
         let trash = tmp.path().join("trash");
+        let (mut snap, snap_path) = test_snap(&tmp);
 
         let files = vec![make_file(
             file_path.to_string_lossy().as_ref(),
@@ -275,13 +316,15 @@ mod tests {
             Decision::Safe,
         )];
 
-        let report = clean(&files, false, false, &trash);
+        let report = clean(&files, false, false, &trash, &mut snap, &snap_path);
         assert_eq!(report.files_removed, 1);
         assert_eq!(report.bytes_freed, 11);
         assert!(!file_path.exists());
         assert_eq!(report.trash_entries.len(), 1);
         // File should exist in trash
         assert!(!report.trash_entries.is_empty());
+        // Snapshot was populated
+        assert_eq!(snap.entry_count(), 1);
     }
 
     #[test]
@@ -291,13 +334,15 @@ mod tests {
         fs::write(&file_path, b"data").unwrap();
         let trash = tmp.path().join("trash");
 
+        let (mut snap, snap_path) = test_snap(&tmp);
+
         let files = vec![make_file(
             file_path.to_string_lossy().as_ref(),
             4,
             Decision::LowRisk,
         )];
 
-        let report = clean(&files, false, false, &trash);
+        let report = clean(&files, false, false, &trash, &mut snap, &snap_path);
         assert_eq!(report.files_skipped, 1);
         assert!(file_path.exists()); // still there
     }
@@ -306,8 +351,9 @@ mod tests {
     fn test_clean_never_removes_protected() {
         let tmp = TempDir::new().unwrap();
         let trash = tmp.path().join("trash");
+        let (mut snap, snap_path) = test_snap(&tmp);
         let files = vec![make_file("/etc/fake", 100, Decision::Protected)];
-        let report = clean(&files, true, true, &trash);
+        let report = clean(&files, true, true, &trash, &mut snap, &snap_path);
         assert_eq!(report.files_skipped, 1);
         assert_eq!(report.files_removed, 0);
     }
@@ -319,13 +365,15 @@ mod tests {
         fs::write(&file_path, b"precious data").unwrap();
         let trash = tmp.path().join("trash");
 
+        let (mut snap, snap_path) = test_snap(&tmp);
+
         let files = vec![make_file(
             file_path.to_string_lossy().as_ref(),
             13,
             Decision::Safe,
         )];
 
-        let report = clean(&files, false, false, &trash);
+        let report = clean(&files, false, false, &trash, &mut snap, &snap_path);
         assert_eq!(report.files_removed, 1);
         assert_eq!(report.trash_entries.len(), 1);
         let entry = &report.trash_entries[0];
