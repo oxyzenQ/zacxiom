@@ -1,20 +1,20 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Parallel-safe Analysis — v8.6
+//! Parallel-safe Analysis — v8.6 → v11.1 (dead deletion path removed)
 //!
 //! Concurrent analysis with sequential execution guarantees.
 //!
 //! Analysis (classification, planning, advisor) MAY run concurrently.
-//! Cleanup execution MUST be sequential to avoid race conditions.
+//! Cleanup execution is ALWAYS delegated to the single trash/recovery pipeline.
+//! There is exactly one deletion implementation: cleaner::clean().
 //!
 //! Architecture:
-//!   analyze_concurrently() → produces plans in parallel
-//!   execute_sequentially() → applies plans one at a time
+//!   analyze_concurrently() → produces plans in parallel (read-only)
+//!   validate_no_overlap()  → safety check before cleanup
 
 use crate::planner::CleanupPlan;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 
 /// Result of concurrent analysis of multiple paths.
 #[derive(Debug)]
@@ -91,86 +91,6 @@ pub fn validate_no_overlap(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, Pa
 
     (valid, conflicts)
 }
-
-/// Execute cleanup plans sequentially (one at a time).
-///
-/// ⚠️  This function performs actual filesystem mutations.
-/// Each plan is applied in order. Returns count of successful cleanups.
-///
-/// CRITICAL: Never call this from a parallel context.
-/// This must be the ONLY thread performing cleanup at any given time.
-pub fn execute_sequentially(
-    plans: &[(&CleanupPlan, &Path)],
-    smart: bool,
-    force: bool,
-) -> (usize, u64) {
-    let mut cleaned = 0usize;
-    let mut freed: u64 = 0;
-
-    for (plan, path) in plans {
-        if !plan.safe_to_clean {
-            continue;
-        }
-
-        // Validate path still exists before cleaning
-        if !path.exists() {
-            continue;
-        }
-
-        // Apply smart/force filtering
-        let can_clean = match plan.risk_level {
-            crate::engine::types::RiskLevel::Minimal | crate::engine::types::RiskLevel::Low => true,
-            crate::engine::types::RiskLevel::Moderate => smart || force,
-            crate::engine::types::RiskLevel::High => force,
-            crate::engine::types::RiskLevel::Critical => false,
-        };
-
-        if !can_clean {
-            continue;
-        }
-
-        // Perform the actual cleanup
-        if let Ok(meta) = std::fs::symlink_metadata(path) {
-            if meta.is_dir() {
-                if std::fs::remove_dir_all(path).is_ok() {
-                    cleaned += 1;
-                    freed += plan.estimated_reclaimable_bytes;
-                }
-            } else if meta.is_file() && std::fs::remove_file(path).is_ok() {
-                cleaned += 1;
-                freed += plan.estimated_reclaimable_bytes;
-            }
-        }
-    }
-
-    (cleaned, freed)
-}
-
-/// Guard type that prevents parallel cleanup execution.
-///
-/// Created once per cleanup session. Drop-implements logging.
-pub struct CleanupSession {
-    pub paths: Vec<PathBuf>,
-}
-
-impl CleanupSession {
-    pub fn new(paths: Vec<PathBuf>) -> Self {
-        CleanupSession { paths }
-    }
-
-    /// Number of paths in this cleanup session.
-    pub fn len(&self) -> usize {
-        self.paths.len()
-    }
-
-    /// Whether the session is empty.
-    pub fn is_empty(&self) -> bool {
-        self.paths.is_empty()
-    }
-}
-
-/// Alias for readability.
-pub type ArcAnalysis = Arc<ConcurrentAnalysis>;
 
 #[cfg(test)]
 mod tests {

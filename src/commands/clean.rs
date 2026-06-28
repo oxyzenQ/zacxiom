@@ -269,9 +269,13 @@ pub fn run_clean(
         return;
     }
 
-    // Record trash paths in snapshot
-    for (orig, trash) in &report.trash_paths {
-        snap.add(orig, 0, Some(trash.clone()));
+    // Record trash paths in snapshot with actual (re-statted) sizes
+    for entry in &report.trash_entries {
+        snap.add(
+            &entry.original_path,
+            entry.actual_size,
+            Some(entry.trash_path.clone()),
+        );
     }
     // Record skipped files for auditing
     for f in &classified {
@@ -317,8 +321,11 @@ pub fn run_clean(
     println!("  Stored in: ~/.cache/zacxiom/snapshots/");
 
     // Show top-removed categories for user confidence
-    let removed_paths: std::collections::HashSet<&str> =
-        report.trash_paths.iter().map(|(p, _)| p.as_str()).collect();
+    let removed_paths: std::collections::HashSet<&str> = report
+        .trash_entries
+        .iter()
+        .map(|e| e.original_path.as_str())
+        .collect();
     let mut domain_counts: std::collections::HashMap<String, (usize, u64)> =
         std::collections::HashMap::new();
     for f in &classified {

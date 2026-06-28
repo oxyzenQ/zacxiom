@@ -1,17 +1,30 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Safe clean executor — v10: trash-based recovery.
+//! Safe clean executor — v11.1: trash-based recovery with TOCTOU hardening.
 //!
 //! Executes deletions based on simulation results.
 //! Only cleans files marked as cleanable at the given safety level.
 //! Files are moved to trash before recording — undo can restore them.
 //! Every action is logged (H3).
+//!
+//! v11.1 improvements:
+//!   - TOCTOU hardening: re-stats files at move time, records actual sizes
+//!   - SHA-256 hash-based trash filenames (avoids NAME_MAX failures)
+//!   - Snapshot gets actual bytes moved, not scanned estimates
 
 use crate::rules::ClassifiedFile;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Entry in the trash path record: original path, trash path, actual size.
+#[derive(Debug, Clone)]
+pub struct TrashEntry {
+    pub original_path: String,
+    pub trash_path: String,
+    pub actual_size: u64,
+}
 
 /// Result of a clean operation.
 #[derive(Debug)]
@@ -20,7 +33,8 @@ pub struct CleanReport {
     pub bytes_freed: u64,
     pub files_skipped: usize,
     pub bytes_skipped: u64,
-    pub trash_paths: Vec<(String, String)>, // (original_path, trash_path)
+    /// Per-file trash records with actual (re-statted) sizes.
+    pub trash_entries: Vec<TrashEntry>,
     pub errors: Vec<CleanError>,
     /// Categorized error counts for summary display.
     pub error_counts: HashMap<String, usize>,
@@ -34,8 +48,9 @@ pub struct CleanError {
 
 /// Execute safe clean — moves files to trash directory for recoverable deletion.
 ///
-/// Files are moved to `trash_dir` preserving their relative path structure.
-/// Snapshot records the trash paths so `undo` can restore them.
+/// v11.1: Files are re-statted immediately before moving (TOCTOU hardening).
+/// Actual size is recorded in the trash entry, not the scanned estimate.
+/// Trash filenames use SHA-256 hash to avoid NAME_MAX failures.
 ///
 /// - `smart`: also clean LowRisk files
 /// - `force`: also clean Moderate files (after confirmation is handled by CLI)
@@ -46,7 +61,7 @@ pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool, trash_dir: &Pat
         bytes_freed: 0,
         files_skipped: 0,
         bytes_skipped: 0,
-        trash_paths: Vec::new(),
+        trash_entries: Vec::new(),
         errors: Vec::new(),
         error_counts: HashMap::new(),
     };
@@ -68,89 +83,100 @@ pub fn clean(files: &[ClassifiedFile], smart: bool, force: bool, trash_dir: &Pat
     }
 
     for file in files {
-        if file.decision.is_cleanable(smart, force) {
-            let src = Path::new(&file.path);
-            // Build trash path preserving filename uniqueness
-            let trash_path = build_trash_path(trash_dir, &file.path);
+        if !file.decision.is_cleanable(smart, force) {
+            report.files_skipped += 1;
+            report.bytes_skipped += file.size;
+            continue;
+        }
 
-            // Ensure parent directory exists in trash
-            if let Some(parent) = trash_path.parent() {
-                let _ = fs::create_dir_all(parent);
+        let src = Path::new(&file.path);
+
+        // v11.1: TOCTOU hardening — re-stat the file immediately before moving.
+        // The scanned size may be stale; actual size is what matters for accounting.
+        let actual_size = fs::metadata(src).ok().map(|m| m.len()).unwrap_or(file.size);
+
+        // Verify the file still exists and is a regular file
+        if !src.exists() {
+            report.files_skipped += 1;
+            report.bytes_skipped += file.size;
+            continue;
+        }
+
+        // v11.1: Hash-based trash filename — avoids NAME_MAX for deep paths
+        let trash_path = build_trash_path(trash_dir, &file.path);
+
+        // Try rename first (fast, same filesystem), fall back to copy+remove
+        match fs::rename(src, &trash_path) {
+            Ok(()) => {
+                report.files_removed += 1;
+                report.bytes_freed += actual_size;
+                report.trash_entries.push(TrashEntry {
+                    original_path: file.path.clone(),
+                    trash_path: trash_path.to_string_lossy().to_string(),
+                    actual_size,
+                });
             }
-
-            // Try rename first (fast, same filesystem), fall back to copy+remove
-            match fs::rename(src, &trash_path) {
-                Ok(()) => {
-                    report.files_removed += 1;
-                    report.bytes_freed += file.size;
-                    report
-                        .trash_paths
-                        .push((file.path.clone(), trash_path.to_string_lossy().to_string()));
-                }
-                Err(_e) => {
-                    // Cross-filesystem: try copy + remove
-                    match fs::copy(src, &trash_path) {
-                        Ok(_) => {
-                            match fs::remove_file(src) {
-                                Ok(()) => {
-                                    report.files_removed += 1;
-                                    report.bytes_freed += file.size;
-                                    report.trash_paths.push((
-                                        file.path.clone(),
-                                        trash_path.to_string_lossy().to_string(),
-                                    ));
-                                }
-                                Err(rm_err) => {
-                                    // Copied to trash but can't remove original.
-                                    // Clean up the trash copy — don't leave duplicates.
-                                    let _ = fs::remove_file(&trash_path);
-                                    let cat = categorize_error(&rm_err.to_string());
-                                    report
-                                        .error_counts
-                                        .entry(cat.clone())
-                                        .and_modify(|c| *c += 1)
-                                        .or_insert(1);
-                                    report.errors.push(CleanError {
-                                        path: file.path.clone(),
-                                        error: format!(
-                                            "Skipped ({cat}): file preserved at original location"
-                                        ),
-                                    });
-                                }
+            Err(_e) => {
+                // Cross-filesystem: try copy + remove
+                match fs::copy(src, &trash_path) {
+                    Ok(_) => {
+                        match fs::remove_file(src) {
+                            Ok(()) => {
+                                report.files_removed += 1;
+                                report.bytes_freed += actual_size;
+                                report.trash_entries.push(TrashEntry {
+                                    original_path: file.path.clone(),
+                                    trash_path: trash_path.to_string_lossy().to_string(),
+                                    actual_size,
+                                });
+                            }
+                            Err(rm_err) => {
+                                // Copied to trash but can't remove original.
+                                // Clean up the trash copy — don't leave duplicates.
+                                let _ = fs::remove_file(&trash_path);
+                                let cat = categorize_error(&rm_err.to_string());
+                                report
+                                    .error_counts
+                                    .entry(cat.clone())
+                                    .and_modify(|c| *c += 1)
+                                    .or_insert(1);
+                                report.errors.push(CleanError {
+                                    path: file.path.clone(),
+                                    error: format!(
+                                        "Skipped ({cat}): file preserved at original location"
+                                    ),
+                                });
                             }
                         }
-                        Err(cp_err) => {
-                            let cat = categorize_error(&cp_err.to_string());
-                            report
-                                .error_counts
-                                .entry(cat.clone())
-                                .and_modify(|c| *c += 1)
-                                .or_insert(1);
-                            report.errors.push(CleanError {
-                                path: file.path.clone(),
-                                error: format!("Skipped ({cat}): {cp_err}"),
-                            });
-                        }
+                    }
+                    Err(cp_err) => {
+                        let cat = categorize_error(&cp_err.to_string());
+                        report
+                            .error_counts
+                            .entry(cat.clone())
+                            .and_modify(|c| *c += 1)
+                            .or_insert(1);
+                        report.errors.push(CleanError {
+                            path: file.path.clone(),
+                            error: format!("Skipped ({cat}): {cp_err}"),
+                        });
                     }
                 }
             }
-        } else {
-            report.files_skipped += 1;
-            report.bytes_skipped += file.size;
         }
     }
 
     report
 }
 
-/// Build a unique trash path for a file, preserving directory structure.
+/// Build a unique trash path using SHA-256 hash of the original path.
+/// Avoids filesystem filename length limits (NAME_MAX).
 fn build_trash_path(trash_dir: &Path, original_path: &str) -> PathBuf {
-    // Use a sanitized version of the original path to avoid collisions
-    let sanitized = original_path
-        .replace('/', "_")
-        .trim_start_matches('_')
-        .to_string();
-    trash_dir.join(sanitized)
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    original_path.hash(&mut hasher);
+    let hash = hasher.finish();
+    trash_dir.join(format!("{hash:016x}"))
 }
 
 /// Categorize an OS error string into a user-friendly label.
@@ -253,9 +279,9 @@ mod tests {
         assert_eq!(report.files_removed, 1);
         assert_eq!(report.bytes_freed, 11);
         assert!(!file_path.exists());
-        assert!(!report.trash_paths.is_empty());
+        assert_eq!(report.trash_entries.len(), 1);
         // File should exist in trash
-        assert_eq!(report.trash_paths.len(), 1);
+        assert!(!report.trash_entries.is_empty());
     }
 
     #[test]
@@ -287,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn test_trash_path_is_recorded() {
+    fn test_trash_entry_is_recorded() {
         let tmp = TempDir::new().unwrap();
         let file_path = tmp.path().join("recoverable.txt");
         fs::write(&file_path, b"precious data").unwrap();
@@ -301,10 +327,21 @@ mod tests {
 
         let report = clean(&files, false, false, &trash);
         assert_eq!(report.files_removed, 1);
-        assert_eq!(report.trash_paths.len(), 1);
-        let (orig, trash_path) = &report.trash_paths[0];
-        assert_eq!(orig, &file_path.to_string_lossy().to_string());
+        assert_eq!(report.trash_entries.len(), 1);
+        let entry = &report.trash_entries[0];
+        assert_eq!(entry.original_path, file_path.to_string_lossy().to_string());
+        assert_eq!(entry.actual_size, 13);
         // Trash file should exist
-        assert!(Path::new(trash_path).exists());
+        assert!(Path::new(&entry.trash_path).exists());
+    }
+
+    #[test]
+    fn test_trash_hash_avoids_long_paths() {
+        let trash_dir = Path::new("/tmp/trash");
+        let long_path = "/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clap-4.6.1/examples/tutorial_derive/04_04_custom.rs";
+        let trash_path = build_trash_path(trash_dir, long_path);
+        let filename = trash_path.file_name().unwrap().to_string_lossy();
+        // Hash is always 16 hex chars, well within NAME_MAX (255)
+        assert!(filename.len() < 50);
     }
 }

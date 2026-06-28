@@ -93,8 +93,9 @@ pub fn run_snapshot_delete(id: &str, force: bool) {
     if !force {
         let snap = match snapshot::Snapshot::load(id) {
             Ok(s) => s,
-            Err(e) => {
-                eprintln!("Error loading snapshot {id}: {e}");
+            Err(_) => {
+                eprintln!("Snapshot not found: {id}");
+                eprintln!("Run 'zacxiom snapshot list' to see available snapshots.");
                 std::process::exit(1);
             }
         };

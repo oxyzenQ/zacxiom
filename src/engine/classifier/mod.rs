@@ -63,6 +63,29 @@ pub fn classify(path: &Path) -> ClassificationResult {
     // Size if available
     result.size = metadata::file_size(path);
 
+    // ── Layer 0: Active environment protection (v11.1) ─────
+    // Highest priority — never classify active SDKs/toolchains as anything else.
+    // Must match classify_fast behaviour for consistency across all commands.
+    if let Some(active_env) = crate::environment::is_active_environment(path) {
+        result.category = Category::ProtectedActiveEnvironment;
+        result.risk_level = RiskLevel::Critical;
+        result.regenerable = false;
+        result.matched_by = "active-environment".to_string();
+        result.reasons.push(format!(
+            "Active environment detected: {} ({})",
+            active_env.name, active_env.stack
+        ));
+        result.created_by = active_env.stack.clone();
+        result.regenerated_by = "Reinstall via toolchain manager".to_string();
+        result.depends_on = active_env.name.clone();
+        result.deletion_impact = format!(
+            "Active {} environment would stop working immediately. {}, {}, and all development tools would fail until reinstalled.",
+            active_env.stack, active_env.name, active_env.stack
+        );
+        result.confidence = 0.99;
+        return result;
+    }
+
     // ── Layer 1: Rule database (structured path matching) ─────
     let rules = super::rules::rule_database(); // cached OnceLock
     let mut matched = false;
