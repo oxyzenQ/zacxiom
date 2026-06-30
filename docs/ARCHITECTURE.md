@@ -1,7 +1,8 @@
-# 🧱 ZACXIOM ARCHITECTURE v5.3.0 — v5.3.0
+# 🧱 ZACXIOM ARCHITECTURE v13.0.0
 
 > **Constraint:** Core engine <1k LOC. Plugins unlimited.
 > **Law:** If a module doesn't serve safety, explainability, or awareness — it doesn't exist.
+> **v13:** User-controlled safety — config-driven rules, no hardcoded extensions.
 
 ---
 
@@ -13,23 +14,29 @@ zacxiom/
 ├── build.sh                  # build + check-all
 ├── ARCHITECTURE.md
 ├── RULES.md
+├── example/
+│   └── config.toml           # v13: fully documented example config
 ├── src/
-│   ├── main.rs               # Entry point (<60 LOC)
-│   ├── cli.rs                # clap derive (scan/report/simulate/clean)
-│   ├── scanner.rs            # File discovery engine
+│   ├── main.rs               # Entry point — config load, --testconf, dispatch
+│   ├── cli.rs                # clap derive (scan/clean/simulate/config + --exclude/--yes/--fail-fast)
+│   ├── config.rs             # v13: TOML config + strict validation + human-readable sizes
+│   ├── exclude.rs            # v13: ExcludeFilter (config + CLI + glob patterns)
+│   ├── ignorefile.rs         # v13: .zacxiomignore support (like .gitignore)
+│   ├── scanner.rs            # File discovery engine (exclude-aware)
 │   ├── cache.rs              # Cache domain classification
 │   ├── ownership.rs          # Package vs user vs system detection
 │   ├── risk.rs               # Rule-based risk scoring
 │   ├── simulator.rs          # Dry-run + explainable output
-│   ├── cleaner.rs            # Safe clean executor
-│   └── rules.rs              # Immutable safety rules
+│   ├── cleaner.rs            # Safe clean executor (TOCTOU-hardened, atomic copy, checksum)
+│   ├── rules.rs              # Immutable safety rules + matches_rules_exclude()
+│   ├── pipeline.rs           # Classification pipeline (smart threading, load-aware)
+│   ├── snapshot.rs           # XDG-compliant snapshot storage (collision-proof IDs)
+│   └── commands/             # CLI command implementations
+│       ├── clean.rs          # clean command (confirmation prompts, --yes, --include)
+│       ├── config.rs         # v13: config init/show/path subcommands
+│       └── ...               # scan, report, explain, status, doctor, etc.
 └── tests/
-    ├── integration/
-    │   ├── scan_test.rs
-    │   ├── simulate_test.rs
-    │   └── clean_test.rs
-    └── fixtures/
-        └── mock_fs/           # Controlled test filesystem
+    └── golden/               # Deterministic output tests (help, status, doctor)
 ```
 
 ## 🧠 Core Data Flow

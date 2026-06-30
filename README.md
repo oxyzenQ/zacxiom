@@ -31,7 +31,7 @@ zacxiom follows four principles:
 
 ```bash
 # Install
-./scripts/install.sh            # user install → ~/.local/bin
+./scripts/install.sh            # user install → ~/.local/bin (also copies example config)
 ./scripts/install.sh --system   # system install → /usr/local/bin (needs sudo)
 
 # Uninstall
@@ -40,6 +40,9 @@ zacxiom follows four principles:
 
 # Scan — what exists, what is safe
 zacxiom scan
+
+# Scan with exclude — protect specific paths/patterns
+zacxiom scan --exclude "~/Downloads" --exclude "*.iso"
 
 # Explain — why is a specific path safe or blocked?
 zacxiom explain ~/.cache
@@ -50,14 +53,23 @@ zacxiom plan
 # Simulate — what would happen?
 zacxiom simulate
 
-# Clean — safe files only
+# Clean — safe files only (first run = dry-run preview)
 zacxiom clean
 
-# Clean — safe + low risk
-zacxiom clean --smart
+# Clean — actually delete (skip dry-run + prompts)
+zacxiom clean --yes
 
-# Clean — with confirmation
+# Clean — safe + low risk
+zacxiom clean --smart --yes
+
+# Clean — with confirmation (type "DELETE")
 zacxiom clean --force
+
+# Clean — whitelist mode (only clean matching patterns)
+zacxiom clean --include "target/*" --include "node_modules/*" --smart --yes
+
+# Clean — stop on first error
+zacxiom clean --smart --yes --fail-fast
 
 # Undo — restore files from last cleanup
 zacxiom undo
@@ -67,6 +79,12 @@ zacxiom undo --id snap-xxxx
 
 # Status — system health and snapshot overview
 zacxiom status
+
+# Configuration
+zacxiom config init      # create ~/.config/zacxiom/config.toml
+zacxiom config show      # print effective config
+zacxiom config path      # print config file location
+zacxiom --testconf       # validate config (exit 0 = ok, 1 = invalid)
 
 # Check for updates
 zacxiom --check-update
@@ -84,6 +102,86 @@ cd zacxiom
 ./scripts/build.sh check-all
 ```
 
+## v13.0.0 — What's New
+
+### User-Controlled Safety
+- **`--exclude`** — protect specific paths/patterns from scan/clean
+- **`~/.config/zacxiom/config.toml`** — TOML config with strict validation
+- **`--testconf`** — validate config; malformed = hard error (exit 2)
+- **`config init/show/path`** — manage config via CLI
+- **`[rules_exclude].exclude`** — config-driven protection (no hardcoded extensions)
+- **Human-readable sizes** — `max_auto_clean_size = "100MB"` (MB/GB only)
+
+### Safety Hardening
+- **Default dry-run on first use** — zero data loss risk for new users
+- **Confirmation prompts** — `--smart` requires "yes", `--force` requires "DELETE"
+- **`--yes` flag** — skip prompts for CI/scripts
+- **`--force` NO LONGER allows HighRisk** — config/credentials never auto-deleted
+- **Engine-protected categories** — `.git/HEAD`, system binaries, SSH keys → always Protected
+- **20 protected extensions** — `.iso .vmdk .vdi .qcow2 .ova .img .pem .key` etc.
+- **TOCTOU hardening** — `O_NOFOLLOW` + `fstat` prevents symlink swap attacks
+- **Atomic cross-fs copy** — fsync + optional SHA-256 checksum verification
+- **Canonical path matching** — symlink traversal (`/tmp/link → /etc`) blocked
+
+### Performance
+- **Smart threading** — 75% of CPUs, load-aware (reads `/proc/loadavg`), never hogs CPU
+- **`[scan].max_threads`** — manual override (0 = auto, 1-N = manual)
+- **Progress bar** — shown for >100 file deletions
+
+### Recovery
+- **XDG-compliant storage** — snapshots in `~/.local/share/zacxiom/` (not `~/.cache/`)
+- **SHA-256 trash paths** — 128-bit collision resistance
+- **Collision-proof snapshot IDs** — `snap-{PID}-{timestamp}-{entropy}`
+- **Backward compat** — legacy `~/.cache/zacxiom/` snapshots still readable
+
+### Developer Experience
+- **`.zacxiomignore`** — project-level exclude patterns (like `.gitignore`)
+- **`--include` whitelist mode** — only clean matching patterns
+- **`--fail-fast`** — stop on first error
+- **`example/config.toml`** — fully documented, auto-installed by `install.sh`
+
+## Configuration
+
+Zacxiom reads `~/.config/zacxiom/config.toml` on startup. If the file has syntax errors or invalid values, zacxiom **refuses to run** — never silently falls back to defaults.
+
+```bash
+# Create default config
+zacxiom config init
+
+# Validate
+zacxiom --testconf
+
+# Show effective config
+zacxiom config show
+```
+
+Example config sections:
+```toml
+[scan]
+exclude = ["~/Downloads", "~/Documents"]
+exclude_patterns = ["*.tmp"]
+max_threads = 0  # 0 = auto (75% CPUs, load-aware)
+
+[rules_exclude]
+# Files zacxiom NEVER scans or cleans — add your own
+exclude = ["*.iso", "*.vmdk", "*.pem", "*.private", "Crypto_wallet.sha256sum"]
+
+[clean]
+require_confirmation = true
+default_mode = "safe"  # "safe" | "smart" (force NOT allowed as default)
+max_auto_clean_size = "100MB"  # human-readable (MB/GB only)
+first_run_dry_run = true
+
+[snapshot]
+dir = "~/.local/share/zacxiom/snapshots"
+auto_prune_days = 30
+
+[trash]
+verify_checksum = false  # true = SHA-256 verify on cross-fs copies
+```
+
+See [example/config.toml](example/config.toml) for the full documented example.
+
 ## Intelligence Layers
 
 | Layer | Capability |
@@ -94,15 +192,17 @@ cd zacxiom
 | **Simulation** | Mandatory dry-run with action labels: WOULD CLEAN, BLOCKED, NEVER |
 | **Context Memory** | Adaptive thresholds per system — learns what you trust |
 | **Safety Lock** | H1–H6 hard rules enforced at runtime — no bypass |
+| **Config-Driven Rules** | v13: `[rules_exclude].exclude` — no hardcoded extensions |
 
 ## Safety Guarantees
 
 - **H1** — No silent deletion. Every action requires explicit intent.
-- **H2** — System paths hard-protected (never removable).
+- **H2** — System paths hard-protected (never removable). Canonical path check blocks symlink traversal.
 - **H3** — Every action is logged for audit.
 - **H4** — No root required for operation.
-- **H5** — Simulation mandatory before clean.
-- **H6** — `--force` requires explicit `YES` confirmation.
+- **H5** — Simulation mandatory before clean. First-run auto dry-run.
+- **H6** — `--force` requires explicit confirmation (type "DELETE") or `--yes`.
+- **v13** — `--force` NO LONGER allows HighRisk files. Protected extensions (`.iso`, `.pem`, etc.) NEVER cleanable. Config validation is strict — malformed = hard error.
 
 ## Architecture
 
@@ -114,7 +214,7 @@ See [docs/RULES.md](docs/RULES.md) for the complete hardened safety specificatio
 
 ```bash
 # Verify release integrity
-sha512sum -c zacxiom-v12.0.1-linux-amd64.tar.gz.sha512
+sha512sum -c zacxiom-v13.0.0-linux-amd64.tar.gz.sha512
 ```
 
 ## Intellectual Property

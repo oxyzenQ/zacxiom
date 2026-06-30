@@ -2,6 +2,71 @@
 
 All notable changes to zacxiom.
 
+## [v13.0.0] — 2026-06-30
+
+### Masterclass Safety Overhaul — "Safe filesystem cleaning, explained."
+
+### Tagline
+- New: "Safe filesystem cleaning, explained."
+- Subtitle: "Clean safely. Explain every decision. Recover anything."
+
+### Added — User-Controlled Safety
+- `--exclude` flag on scan/clean/simulate/report (glob + directory paths)
+- `~/.config/zacxiom/config.toml` — TOML config with strict validation
+- `--testconf` global flag — validate config, exit 0 (ok) or 1 (invalid)
+- `config` subcommand: `init`, `show`, `path`, `testconf`
+- `[rules_exclude].exclude` — config-driven file protection (replaces hardcoded extensions)
+- Human-readable sizes: `max_auto_clean_size = "100MB"` (MB/GB only, raw bytes backward-compat)
+- `--yes` flag — skip prompts for CI/scripts
+- `--include` whitelist mode — only clean matching patterns
+- `--fail-fast` flag — stop on first error
+- `.zacxiomignore` file support (like `.gitignore`, directory-scoped patterns)
+- `example/config.toml` — fully documented, auto-installed by `install.sh`
+
+### Added — Safety Hardening
+- Default dry-run on first use (Option A — zero data loss risk for new users)
+- Confirmation prompts: `--smart` requires "yes", `--force` requires "DELETE"
+- `--force` NO LONGER allows HighRisk files (was cleanable, caused data loss)
+- Engine-protected category enforcement: `.git/HEAD`, system binaries, SSH keys → always Protected
+- 20 protected extensions by default: `.iso .vmdk .vdi .qcow2 .ova .img .raw .wim .pem .key .p12 .pfx .keystore .jks .gpg .asc`
+- Canonical path matching for protected paths (symlink traversal blocked)
+- TOCTOU hardening: `O_NOFOLLOW` + `fstat` before rename (prevents symlink swap attacks)
+- Atomic cross-fs copy: copy → fsync → verify size/checksum → remove original
+- Size-based protection: large files in user dirs need explicit `--force`
+
+### Added — Performance
+- Smart threading: 75% of CPUs, scaled by workload, load-aware (reads `/proc/loadavg`)
+- `[scan].max_threads` config option (0 = auto, 1-N = manual)
+- Progress bar during clean for >100 files
+
+### Added — Recovery
+- XDG-compliant snapshot storage: `~/.local/share/zacxiom/snapshots` (was `~/.cache/`)
+- SHA-256 trash paths (128-bit collision resistance, was 64-bit DefaultHasher)
+- Collision-proof snapshot IDs: `snap-{PID}-{timestamp}-{entropy}`
+- Backward compat: legacy `~/.cache/zacxiom/` snapshots still readable
+- `[trash].verify_checksum` config option — SHA-256 verify on cross-fs copies
+
+### Fixed — Critical Bugs
+- `~/Downloads` removed from default scan roots (root cause of ISO/data loss)
+- `safety::validate_clean()` wired into clean pipeline (was dead code)
+- `trailing_var_arg` removed from CLI — flags now work after positional paths
+- `.git/HEAD` now classified as Protected (was Moderate, cleanable with `--force`)
+- Rayon pool `.expect()` replaced with graceful sequential fallback
+
+### Changed
+- Tagline: "Easy to use intelligence cleaning in userspace" → "Safe filesystem cleaning, explained."
+- HighRisk decision: NEVER cleanable (was cleanable with `--force`)
+- Snapshot/trash directory: `~/.cache/zacxiom/` → `~/.local/share/zacxiom/` (XDG compliance)
+- `cleaner::clean()` refactored to use `CleanOptions` struct
+- `optimal_threads()` now load-aware + config-driven
+
+### Verified
+- 402 unit tests PASS
+- 30 stress tests PASS (crash recovery, concurrent, permissions, special files)
+- 20 adversarial tests PASS (symlink, path traversal, config injection, extension bypass)
+- codespell PASS, golden 3/3 PASS, clippy clean
+- Zero panics possible in production code
+
 ## [v12.0.0] — 2026-06-28
 
 ### Added — Interrupt Recovery
