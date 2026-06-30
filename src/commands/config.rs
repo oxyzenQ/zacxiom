@@ -42,7 +42,23 @@ pub fn run_config_show(cfg: &config::Config) {
     println!("  exclude           : {:?}", cfg.scan.exclude);
     println!("  exclude_patterns  : {:?}", cfg.scan.exclude_patterns);
     println!("  min_size          : {} bytes", cfg.scan.min_size);
+    println!(
+        "  max_threads       : {} {}",
+        cfg.scan.max_threads,
+        if cfg.scan.max_threads == 0 {
+            "(auto — 75% CPUs, load-aware)"
+        } else {
+            "(manual)"
+        }
+    );
     println!("  warn_user_dirs    : {}", cfg.scan.warn_user_dirs);
+    println!();
+    println!("[rules_exclude]");
+    println!(
+        "  exclude ({} patterns) : {:?}",
+        cfg.rules_exclude.exclude.len(),
+        cfg.rules_exclude.exclude
+    );
     println!();
     println!("[clean]");
     println!(

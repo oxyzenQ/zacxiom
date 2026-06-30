@@ -13,8 +13,9 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "zacxiom",
     version,
-    about = "Filesystem Intelligence Engine — Observe → Understand → Decide → Act",
-    long_about = "Safe-by-default filesystem cleanup with full explainability.\n\
+    about = "Easy to use intelligence cleaning in userspace",
+    long_about = "Easy to use intelligence cleaning in userspace.\n\
+                  Safe-by-default filesystem cleanup with full explainability.\n\
                   Every decision is justified. Every action is logged.\n\n\
                   Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal\n\n\
                   v13: User-controlled safety — --exclude, config.toml, --testconf.",

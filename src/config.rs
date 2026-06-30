@@ -27,9 +27,33 @@ pub struct Config {
     #[serde(default)]
     pub clean: CleanConfig,
     #[serde(default)]
+    pub rules_exclude: RulesExcludeConfig,
+    #[serde(default)]
     pub snapshot: SnapshotConfig,
     #[serde(default)]
     pub trash: TrashConfig,
+}
+
+/// v13: Unified rules-based exclude — files matching these patterns are NEVER
+/// scanned or cleaned. Replaces hardcoded PROTECTED_EXTENSIONS in source code.
+/// Users can add their own patterns (e.g. "*.private", "Crypto_wallet.sha256sum").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesExcludeConfig {
+    /// Glob patterns for files that zacxiom will NEVER scan or clean.
+    /// Matched against both full path and filename.
+    /// Defaults include disk images (.iso .vmdk .vdi .qcow2 .ova .img .raw .wim .vhd .vhdx)
+    /// and cryptographic keys (.pem .key .p12 .pfx .keystore .jks .gpg .asc)
+    /// and SSH key filenames (id_rsa id_ed25519 id_ecdsa).
+    #[serde(default = "default_rules_exclude")]
+    pub exclude: Vec<String>,
+}
+
+impl Default for RulesExcludeConfig {
+    fn default() -> Self {
+        RulesExcludeConfig {
+            exclude: default_rules_exclude(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +72,12 @@ pub struct ScanConfig {
     #[serde(default = "default_min_size")]
     pub min_size: u64,
 
+    /// v13: Maximum threads to use for scanning/classification (0 = auto).
+    /// Auto mode uses 75% of available CPUs, scaled by workload size.
+    /// Set to 1-4 to limit CPU usage on constrained systems.
+    #[serde(default)]
+    pub max_threads: usize,
+
     /// Warn before scanning user-content directories (Downloads, Documents, etc.).
     #[serde(default = "default_true")]
     pub warn_user_dirs: bool,
@@ -59,6 +89,7 @@ impl Default for ScanConfig {
             exclude: Vec::new(),
             exclude_patterns: Vec::new(),
             min_size: default_min_size(),
+            max_threads: 0,
             warn_user_dirs: default_true(),
         }
     }
@@ -182,6 +213,41 @@ fn default_protect_extensions() -> Vec<String> {
 fn default_protect_patterns() -> Vec<String> {
     vec!["id_rsa".into(), "id_ed25519".into(), "id_ecdsa".into()]
 }
+
+/// v13: Default rules_exclude patterns — disk images + crypto keys + SSH key filenames.
+/// These are NEVER scanned or cleaned by zacxiom, regardless of location.
+/// Users can override/extend via [rules_exclude].exclude in config.toml.
+fn default_rules_exclude() -> Vec<String> {
+    vec![
+        // Disk images — losing these means losing VMs or installable OS
+        "*.iso".into(),
+        "*.vmdk".into(),
+        "*.vdi".into(),
+        "*.vhd".into(),
+        "*.vhdx".into(),
+        "*.qcow2".into(),
+        "*.qcow".into(),
+        "*.ova".into(),
+        "*.ovf".into(),
+        "*.img".into(),
+        "*.raw".into(),
+        "*.wim".into(),
+        // Cryptographic keys — permanent access loss if deleted
+        "*.pem".into(),
+        "*.key".into(),
+        "*.p12".into(),
+        "*.pfx".into(),
+        "*.keystore".into(),
+        "*.jks".into(),
+        "*.gpg".into(),
+        "*.asc".into(),
+        // SSH key filenames (no extension)
+        "id_rsa".into(),
+        "id_ed25519".into(),
+        "id_ecdsa".into(),
+    ]
+}
+
 fn default_max_auto_clean_size() -> u64 {
     100 * 1024 * 1024 // 100 MB
 }
@@ -339,6 +405,16 @@ fn validate_semantic(cfg: &Config) -> Result<(), String> {
         }
     }
 
+    // v13: Validate rules_exclude patterns
+    for pat in &cfg.rules_exclude.exclude {
+        if let Err(e) = globset::Glob::new(pat) {
+            return Err(format!(
+                "Invalid glob pattern in [rules_exclude].exclude: \"{}\"\n  Error: {e}",
+                pat
+            ));
+        }
+    }
+
     // Validate snapshot.dir: must expand to an absolute path
     let snap_dir = expand_tilde(&cfg.snapshot.dir);
     if !snap_dir.is_absolute() {
@@ -354,11 +430,17 @@ fn validate_semantic(cfg: &Config) -> Result<(), String> {
 
 /// Detect unknown top-level sections and keys.
 fn detect_unknown_keys(toml_doc: &toml::Value) -> Result<(), String> {
-    let known_sections: &[&str] = &["scan", "clean", "snapshot", "trash"];
+    let known_sections: &[&str] = &["scan", "clean", "rules_exclude", "snapshot", "trash"];
     let known_keys: &[(&str, &[&str])] = &[
         (
             "scan",
-            &["exclude", "exclude_patterns", "min_size", "warn_user_dirs"],
+            &[
+                "exclude",
+                "exclude_patterns",
+                "min_size",
+                "max_threads",
+                "warn_user_dirs",
+            ],
         ),
         (
             "clean",
@@ -371,6 +453,7 @@ fn detect_unknown_keys(toml_doc: &toml::Value) -> Result<(), String> {
                 "first_run_dry_run",
             ],
         ),
+        ("rules_exclude", &["exclude"]),
         ("snapshot", &["dir", "auto_prune_days"]),
         ("trash", &["verify_checksum"]),
     ];
@@ -454,11 +537,17 @@ pub fn validate_for_testconf() -> TestconfReport {
     };
 
     // Collect unknown-key warnings
-    let known_sections: &[&str] = &["scan", "clean", "snapshot", "trash"];
+    let known_sections: &[&str] = &["scan", "clean", "rules_exclude", "snapshot", "trash"];
     let known_keys: &[(&str, &[&str])] = &[
         (
             "scan",
-            &["exclude", "exclude_patterns", "min_size", "warn_user_dirs"],
+            &[
+                "exclude",
+                "exclude_patterns",
+                "min_size",
+                "max_threads",
+                "warn_user_dirs",
+            ],
         ),
         (
             "clean",
@@ -471,6 +560,7 @@ pub fn validate_for_testconf() -> TestconfReport {
                 "first_run_dry_run",
             ],
         ),
+        ("rules_exclude", &["exclude"]),
         ("snapshot", &["dir", "auto_prune_days"]),
         ("trash", &["verify_checksum"]),
     ];

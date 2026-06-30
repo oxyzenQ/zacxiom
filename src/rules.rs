@@ -140,9 +140,9 @@ pub const PROTECTED_PATHS: &[&str] = &[
     "/var/lib/pacman/",
 ];
 
-/// v13: File extensions that are NEVER cleanable — disk images + crypto keys.
-/// These are protected regardless of location (even in /tmp or cache dirs).
-/// Deleting a disk image = losing a VM or installable OS. Deleting a .pem = losing access.
+/// v13: DEPRECATED — use matches_rules_exclude() with config-driven patterns.
+/// Kept for backward compatibility with tests that reference it directly.
+/// New code should pass config.rules_exclude.exclude patterns to matches_rules_exclude().
 pub const PROTECTED_EXTENSIONS: &[&str] = &[
     ".iso",
     ".vmdk",
@@ -166,7 +166,8 @@ pub const PROTECTED_EXTENSIONS: &[&str] = &[
     ".asc",
 ];
 
-/// v13: Check if a file has a protected extension (disk image, crypto key, etc.)
+/// v13: Check if a file has a protected extension (legacy, uses hardcoded list).
+/// Prefer matches_rules_exclude() for config-driven matching.
 pub fn has_protected_extension(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
@@ -175,6 +176,27 @@ pub fn has_protected_extension(path: &Path) -> bool {
     PROTECTED_EXTENSIONS
         .iter()
         .any(|p| p.trim_start_matches('.') == lower)
+}
+
+/// v13: Check if a file matches any rules_exclude pattern from config.
+/// This is the config-driven replacement for has_protected_extension().
+/// Patterns are glob expressions matched against both filename and full path.
+/// Returns true if the file should NEVER be scanned or cleaned.
+pub fn matches_rules_exclude(path: &Path, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let path_str = path.to_string_lossy();
+    for pat in patterns {
+        if let Ok(glob) = globset::Glob::new(pat) {
+            let matcher = glob.compile_matcher();
+            if matcher.is_match(name) || matcher.is_match(path_str.as_ref()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// v13: Check if a file matches a protected glob pattern (e.g. id_rsa).

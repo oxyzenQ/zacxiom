@@ -5,7 +5,7 @@
 <h1 align="center">zacxiom</h1>
 
 <p align="center">
-  <strong>Filesystem intelligence for Linux — Observe → Understand → Decide → Act</strong>
+  <strong>Easy to use intelligence cleaning in userspace</strong>
 </p>
 
 <p align="center">

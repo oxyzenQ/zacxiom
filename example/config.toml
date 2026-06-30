@@ -1,0 +1,150 @@
+# zacxiom configuration — example config
+#
+# Easy to use intelligence cleaning in userspace.
+#
+# Location: ~/.config/zacxiom/config.toml (or $XDG_CONFIG_HOME/zacxiom/config.toml)
+#
+# Validate with: zacxiom --testconf
+# If this file has syntax errors or invalid values, zacxiom refuses to run.
+#
+# Lines starting with # are comments. Remove the # to enable a setting.
+
+# ──────────────────────────────────────────────────────────────
+# [scan] — controls filesystem scanning behavior
+# ──────────────────────────────────────────────────────────────
+[scan]
+
+# Directory paths to exclude from scanning (supports ~ expansion).
+# Example: exclude your Downloads and Documents entirely.
+# exclude = [
+#   "~/Downloads",
+#   "~/Documents",
+#   "~/Pictures",
+# ]
+
+# File-name glob patterns to exclude (matched against full path and filename).
+# exclude_patterns = [
+#   "*.tmp",
+#   "*.bak",
+#   "*.swp",
+# ]
+
+# Minimum file size in bytes to include in scan results (default: 1).
+# Set higher to skip tiny files: 1024 = skip files < 1KB.
+min_size = 1
+
+# Maximum threads to use for scanning/classification (default: 0 = auto).
+# Auto mode uses 75% of available CPUs, scaled by workload size, and is
+# load-aware (reduces threads if system load is high).
+# Set to 1-4 to limit CPU usage on constrained systems.
+# max_threads = 0
+
+# Warn before scanning user-content directories (Downloads, Documents, etc.).
+# Default: true — recommended for safety.
+warn_user_dirs = true
+
+# ──────────────────────────────────────────────────────────────
+# [rules_exclude] — files that zacxiom NEVER scans or cleans
+# ──────────────────────────────────────────────────────────────
+# These glob patterns are matched against both the full path and filename.
+# Files matching these patterns are treated as Protected — never deleted,
+# never even appear in cleanable lists, regardless of location.
+#
+# This replaces hardcoded rules in the source code. Add your own patterns
+# to protect specific files important to you.
+# ──────────────────────────────────────────────────────────────
+[rules_exclude]
+exclude = [
+  # Disk images — losing these means losing VMs or installable OS
+  "*.iso",
+  "*.vmdk",
+  "*.vdi",
+  "*.vhd",
+  "*.vhdx",
+  "*.qcow2",
+  "*.qcow",
+  "*.ova",
+  "*.ovf",
+  "*.img",
+  "*.raw",
+  "*.wim",
+
+  # Cryptographic keys — permanent access loss if deleted
+  "*.pem",
+  "*.key",
+  "*.p12",
+  "*.pfx",
+  "*.keystore",
+  "*.jks",
+  "*.gpg",
+  "*.asc",
+
+  # SSH key filenames (no extension)
+  "id_rsa",
+  "id_ed25519",
+  "id_ecdsa",
+
+  # ── Add your custom patterns below (remove the #) ──
+  # "*.private",
+  # "*.futures",
+  # ".quantum",
+  # "Crypto_wallet.sha256sum",
+  # "cat.md",
+  # "jpg45.jpg",
+]
+
+# ──────────────────────────────────────────────────────────────
+# [clean] — controls cleanup execution behavior
+# ──────────────────────────────────────────────────────────────
+[clean]
+
+# Require interactive confirmation before any deletion (default: true).
+# When true, --smart and --force modes prompt for confirmation.
+# Use --yes flag to skip prompts (for CI/scripts).
+require_confirmation = true
+
+# Default clean mode when no flag is given: "safe" | "smart".
+# "force" is NOT allowed as a default — too dangerous.
+# - "safe"  = only SAFE files (browser cache, build output)
+# - "smart" = SAFE + LOW_RISK (also cargo registry, npm cache)
+default_mode = "safe"
+
+# File extensions that are NEVER cleanable (legacy field, prefer [rules_exclude]).
+# Kept for backward compatibility — merged with [rules_exclude].exclude.
+# protect_extensions = [".iso", ".vmdk", ".pem", ".key"]
+
+# File-name patterns that are NEVER cleanable (legacy field).
+# protect_patterns = ["id_rsa", "id_ed25519"]
+
+# Files larger than this (bytes) in user directories require explicit --force.
+# Default: 104857600 (100 MB). Prevents accidental bulk deletion of large files.
+max_auto_clean_size = 104857600
+
+# First-time users get automatic dry-run unless they pass --yes.
+# Default: true — zero data loss risk for new users.
+first_run_dry_run = true
+
+# ──────────────────────────────────────────────────────────────
+# [snapshot] — controls undo/rollback snapshot storage
+# ──────────────────────────────────────────────────────────────
+[snapshot]
+
+# Snapshot storage directory (XDG-compliant).
+# Default: ~/.local/share/zacxiom/snapshots (or $XDG_DATA_HOME/zacxiom/snapshots)
+# Snapshots are user data, not disposable cache — hence XDG_DATA_HOME, not XDG_CACHE_HOME.
+dir = "~/.local/share/zacxiom/snapshots"
+
+# Auto-prune snapshots older than N days (0 = disabled).
+# Default: 30 — keeps a month of undo history.
+auto_prune_days = 30
+
+# ──────────────────────────────────────────────────────────────
+# [trash] — controls trash (recoverable deletion) behavior
+# ──────────────────────────────────────────────────────────────
+[trash]
+
+# Verify SHA-256 checksum of trash copies after move (slower, safer).
+# When true, cross-filesystem copies are verified with SHA-256 before
+# the original is removed. Catches silent corruption.
+# Default: false — enable if you want maximum safety.
+verify_checksum = false

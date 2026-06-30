@@ -1,3 +1,4 @@
+Easy to use intelligence cleaning in userspace.
 Safe-by-default filesystem cleanup with full explainability.
 Every decision is justified. Every action is logged.
 

@@ -19,7 +19,7 @@ pub fn run_inspect_unknown(
     let ctx = RunContext::new("dev");
     let roots = pipeline::resolve_roots(paths);
     let entries = scanner::scan(&roots, depth, 1, true, &ExcludeFilter::empty());
-    let threads = pipeline::optimal_threads(entries.len());
+    let threads = pipeline::optimal_threads_with_config(entries.len(), cfg.scan.max_threads);
     let classified = pipeline::classify(entries, &ctx, threads, cfg);
 
     let breakdown = inspect::analyze(&classified);

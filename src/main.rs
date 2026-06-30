@@ -307,8 +307,22 @@ fn run_testconf() {
             report.config.scan.min_size
         );
         println!(
+            "      max_threads       : {} {}",
+            report.config.scan.max_threads,
+            if report.config.scan.max_threads == 0 {
+                "(auto)"
+            } else {
+                "(manual)"
+            }
+        );
+        println!(
             "      warn_user_dirs    : {}",
             report.config.scan.warn_user_dirs
+        );
+        println!("    [rules_exclude]");
+        println!(
+            "      exclude           : {} patterns",
+            report.config.rules_exclude.exclude.len()
         );
         println!("    [clean]");
         println!(

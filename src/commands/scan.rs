@@ -58,7 +58,7 @@ pub fn run_scan(
 
     let entries = scanner::scan(&roots, depth, effective_min_size, true, &exclude);
     prog.advance();
-    let threads = pipeline::optimal_threads(entries.len());
+    let threads = pipeline::optimal_threads_with_config(entries.len(), cfg.scan.max_threads);
     prog.set_threads(threads);
     let classified = pipeline::classify(entries, &ctx, threads, cfg);
     prog.advance();

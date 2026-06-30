@@ -91,7 +91,7 @@ pub fn run_explain(path: &str, cfg: &Config) {
     // Directory — scan only that directory, not parent; use sufficient depth
     let roots = vec![classify_target.clone()];
     let entries = scanner::scan(&roots, 8, 1, true, &ExcludeFilter::empty());
-    let threads = pipeline::optimal_threads(entries.len());
+    let threads = pipeline::optimal_threads_with_config(entries.len(), cfg.scan.max_threads);
     let classified = pipeline::classify(entries, &ctx, threads, cfg);
 
     let mut eng = crate::engine::classify(classify_target);

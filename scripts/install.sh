@@ -70,6 +70,24 @@ echo ""
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zacxiom"
 mkdir -p "$CONFIG_DIR"
 
+# v13: Install example config.toml if user doesn't have one
+EXAMPLE_CONFIG="$(pwd)/example/config.toml"
+if [ -f "$EXAMPLE_CONFIG" ]; then
+  if [ ! -f "$CONFIG_DIR/config.toml" ]; then
+    cp "$EXAMPLE_CONFIG" "$CONFIG_DIR/config.toml"
+    chmod 644 "$CONFIG_DIR/config.toml"
+    echo -e "  ${GREEN}✓${NC} Default config.toml installed to $CONFIG_DIR/config.toml"
+    echo -e "    Edit with: nano $CONFIG_DIR/config.toml"
+    echo -e "    Validate with: zacxiom --testconf"
+  else
+    echo -e "  ${YELLOW}ℹ${NC} config.toml already exists — keeping your customizations"
+    echo -e "    Example config available at: example/config.toml"
+    echo -e "    To reset: rm $CONFIG_DIR/config.toml && ./scripts/install.sh"
+  fi
+else
+  echo -e "  ${YELLOW}⚠${NC} example/config.toml not found — skipping config install"
+fi
+
 if [ ! -f "$CONFIG_DIR/policy.json" ]; then
   cat > "$CONFIG_DIR/policy.json" << 'EOF'
 {

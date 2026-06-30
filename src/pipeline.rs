@@ -94,18 +94,73 @@ pub fn build_exclude_filter(cfg: &Config, cli_exclude: &[String]) -> ExcludeFilt
 }
 
 /// Determine optimal thread count based on workload size.
-/// Small: 2 threads. Medium: half of logical CPUs. Large: all CPUs.
+/// v13: "Peak but efficient" — uses 75% of CPUs, scaled by workload, load-aware.
+///
+/// Philosophy: zacxiom is a master of threading — boost peak performance when
+/// scanning large filesets, but never hog the CPU. Leaves 25% headroom for the
+/// system and reduces threads if /proc/loadavg indicates high system load.
+///
+/// - Small workloads (<100 files): 2 threads (overhead > benefit)
+/// - Medium (<10k): 50% of headroom
+/// - Large (<100k): full headroom
+/// - Massive (>=100k): full headroom
+/// - Load-aware: if 1-min load avg > 70% of CPUs, halve threads
 pub fn optimal_threads(file_count: usize) -> usize {
+    optimal_threads_with_config(file_count, 0)
+}
+
+/// v13: Configurable thread count. If max_threads=0, auto-compute.
+/// If max_threads > 0, use that (clamped to available CPUs).
+pub fn optimal_threads_with_config(file_count: usize, max_threads: usize) -> usize {
     let cpus = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
-    if file_count < 5_000 {
-        2.min(cpus)
-    } else if file_count < 50_000 {
-        (cpus / 2).max(2)
-    } else {
-        cpus.max(2)
+
+    // Manual override — respect user's config but clamp to CPUs
+    if max_threads > 0 {
+        return max_threads.min(cpus).max(1);
     }
+
+    // Auto mode: 75% of CPUs, leave 25% headroom for system
+    let headroom = (cpus * 3 / 4).max(2);
+
+    // Scale threads by workload size — small workloads don't benefit from many threads
+    let scaled = if file_count < 100 {
+        2 // overhead > benefit for tiny workloads
+    } else if file_count < 1_000 {
+        (headroom / 4).max(2)
+    } else if file_count < 10_000 {
+        (headroom / 2).max(2)
+    } else {
+        headroom // large workloads get full headroom
+    };
+
+    // Load-aware: check /proc/loadavg, reduce threads if system is busy
+    let load_adjusted = apply_load_aware_scaling(scaled, cpus);
+
+    load_adjusted.min(headroom).max(1)
+}
+
+/// v13: Read /proc/loadavg and reduce thread count if system is under load.
+/// If 1-min load average > 70% of CPU count, halve the threads.
+/// This prevents zacxiom from being a "CPU monster" on busy systems.
+fn apply_load_aware_scaling(threads: usize, cpus: usize) -> usize {
+    if threads <= 2 {
+        return threads; // already minimal
+    }
+    if let Ok(loadavg_str) = std::fs::read_to_string("/proc/loadavg") {
+        // Format: "0.52 0.48 0.45 1/234 5678"
+        if let Some(first) = loadavg_str.split_whitespace().next() {
+            if let Ok(load1) = first.parse::<f64>() {
+                let threshold = cpus as f64 * 0.7;
+                if load1 > threshold {
+                    // System is busy — halve our threads
+                    return (threads / 2).max(2);
+                }
+            }
+        }
+    }
+    threads
 }
 
 pub fn classify(
@@ -237,17 +292,18 @@ pub fn classify(
                         ));
                         scored.risk_score = 1.0;
                     }
-                    // v13: Extension protection — disk images, crypto keys, etc.
-                    // Override ANY decision to Protected if the file has a protected extension.
-                    // This is a hard safety net — even if the path is in /tmp or a cache dir,
-                    // an .iso file is NEVER cleanable.
+                    // v13: Rules-based exclude — config-driven patterns from [rules_exclude].exclude.
+                    // Replaces hardcoded PROTECTED_EXTENSIONS. Files matching these patterns
+                    // are NEVER cleanable, regardless of location.
+                    // Also checks legacy [clean].protect_extensions and protect_patterns for backward compat.
                     let path_obj = std::path::Path::new(&path_str);
-                    if rules::has_protected_extension(path_obj)
-                        || rules::matches_protected_pattern(path_obj, &cfg.clean.protect_patterns)
-                    {
+                    let is_excluded = rules::matches_rules_exclude(path_obj, &cfg.rules_exclude.exclude)
+                        || rules::has_protected_extension(path_obj)  // legacy fallback
+                        || rules::matches_protected_pattern(path_obj, &cfg.clean.protect_patterns);
+                    if is_excluded {
                         scored.decision = rules::Decision::Protected;
                         scored.risk_reasons.push(
-                            "Protected file extension (disk image / crypto key) — never cleanable".into(),
+                            "Rules-excluded file (disk image / crypto key / user pattern) — never cleanable".into(),
                         );
                         scored.risk_score = 1.0;
                     }
