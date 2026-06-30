@@ -5,12 +5,11 @@
 <h1 align="center">zacxiom</h1>
 
 <p align="center">
-  <strong>Easy to use intelligence cleaning in userspace</strong>
+  <strong>Safe filesystem cleaning, explained.</strong>
 </p>
 
 <p align="center">
-  A safe-by-default filesystem intelligence engine that evaluates risk, explains decisions,
-  and reclaims space only when it is safe to do so. Every deletion is recoverable.
+  Clean safely. Explain every decision. Recover anything.
 </p>
 
 <p align="center">

@@ -15,7 +15,7 @@
 //!
 //! Use `zacxiom --testconf` to validate the config without running a command.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -115,8 +115,14 @@ pub struct CleanConfig {
     #[serde(default = "default_protect_patterns")]
     pub protect_patterns: Vec<String>,
 
-    /// Files larger than this (bytes) in user directories require explicit --force.
-    #[serde(default = "default_max_auto_clean_size")]
+    /// Files larger than this in user directories require explicit --force.
+    /// v13: Human-readable — accepts "100MB", "1GB", "2gb", "50 mb" (case-insensitive, space-tolerant).
+    /// Also accepts raw bytes (e.g. 104857600) for backward compatibility.
+    /// Only MB and GB suffixes are accepted — use raw bytes for other units.
+    #[serde(
+        default = "default_max_auto_clean_size",
+        deserialize_with = "deserialize_size"
+    )]
     pub max_auto_clean_size: u64,
 
     /// First-time users get automatic dry-run unless they pass --yes.
@@ -250,6 +256,87 @@ fn default_rules_exclude() -> Vec<String> {
 
 fn default_max_auto_clean_size() -> u64 {
     100 * 1024 * 1024 // 100 MB
+}
+
+/// v13: Human-readable size parser. Accepts ONLY these formats:
+///   - "100MB" / "100mb" / "100 MB" / "100 mb"  (megabytes, 1024*1024 bytes)
+///   - "1GB"  / "1gb"  / "1 GB"  / "1 gb"   (gigabytes, 1024^3 bytes)
+///   - 104857600  (raw bytes, backward-compat — integers in TOML)
+///
+/// Rejects: KB, TB, KiB, MiB, GiB, and any other suffix.
+/// Returns bytes as u64. Error message is human-readable.
+fn parse_size_str(s: &str) -> Result<u64, String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err("empty size value".into());
+    }
+    let upper = trimmed.to_uppercase();
+    if upper.ends_with("MB") {
+        let num_str = trimmed[..trimmed.len() - 2].trim();
+        let n: u64 = num_str
+            .parse()
+            .map_err(|e| format!("invalid number before MB: \"{num_str}\" ({e})"))?;
+        Ok(n.saturating_mul(1024 * 1024))
+    } else if upper.ends_with("GB") {
+        let num_str = trimmed[..trimmed.len() - 2].trim();
+        let n: u64 = num_str
+            .parse()
+            .map_err(|e| format!("invalid number before GB: \"{num_str}\" ({e})"))?;
+        Ok(n.saturating_mul(1024 * 1024 * 1024))
+    } else {
+        // Try raw bytes (integer)
+        trimmed.parse::<u64>().map_err(|_| {
+            format!(
+                "invalid size: \"{trimmed}\". Use '100MB', '1GB', or raw bytes (e.g. 104857600). \
+                     Only MB and GB suffixes are accepted."
+            )
+        })
+    }
+}
+
+/// v13: Serde deserializer that accepts both string ("100MB") and integer (104857600).
+/// Uses parse_size_str for validation — only MB/GB/raw-bytes accepted.
+fn deserialize_size<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{Error, Visitor};
+    use std::fmt;
+
+    struct SizeVisitor;
+
+    impl<'de> Visitor<'de> for SizeVisitor {
+        type Value = u64;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(
+                f,
+                "a size string like \"100MB\" or \"1GB\", or an integer like 104857600"
+            )
+        }
+
+        fn visit_str<E: Error>(self, v: &str) -> Result<u64, E> {
+            parse_size_str(v).map_err(E::custom)
+        }
+
+        fn visit_string<E: Error>(self, v: String) -> Result<u64, E> {
+            parse_size_str(&v).map_err(E::custom)
+        }
+
+        fn visit_i64<E: Error>(self, v: i64) -> Result<u64, E> {
+            if v < 0 {
+                Err(E::custom("size cannot be negative"))
+            } else {
+                Ok(v as u64)
+            }
+        }
+
+        fn visit_u64<E: Error>(self, v: u64) -> Result<u64, E> {
+            Ok(v)
+        }
+    }
+
+    deserializer.deserialize_any(SizeVisitor)
 }
 fn default_snapshot_dir() -> String {
     "~/.local/share/zacxiom/snapshots".to_string()
@@ -775,5 +862,85 @@ exclude = "not a list"  # should be array
             "Default config should roundtrip: {:?}",
             parsed.err()
         );
+    }
+
+    // ── v13: Human-readable size parser tests ──────────────────
+
+    #[test]
+    fn test_parse_size_mb() {
+        assert_eq!(parse_size_str("100MB").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_size_str("100mb").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_size_str("100 MB").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_size_str("  50mb  ").unwrap(), 50 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_gb() {
+        assert_eq!(parse_size_str("1GB").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_size_str("1gb").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_size_str("2 GB").unwrap(), 2 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_size_raw_bytes() {
+        assert_eq!(parse_size_str("104857600").unwrap(), 104857600);
+        assert_eq!(parse_size_str("0").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_parse_size_rejects_kb_tb() {
+        assert!(parse_size_str("100KB").is_err(), "KB should be rejected");
+        assert!(parse_size_str("1TB").is_err(), "TB should be rejected");
+        assert!(parse_size_str("100KiB").is_err(), "KiB should be rejected");
+        assert!(parse_size_str("1MiB").is_err(), "MiB should be rejected");
+        assert!(parse_size_str("1GiB").is_err(), "GiB should be rejected");
+    }
+
+    #[test]
+    fn test_parse_size_rejects_invalid() {
+        assert!(parse_size_str("").is_err());
+        assert!(parse_size_str("abc").is_err());
+        assert!(parse_size_str("100XB").is_err(), "unknown suffix");
+        assert!(parse_size_str("MB100").is_err(), "suffix before number");
+    }
+
+    #[test]
+    fn test_config_with_human_readable_size() {
+        let toml = r#"
+[clean]
+max_auto_clean_size = "100MB"
+"#;
+        let cfg = parse_and_validate(toml).unwrap();
+        assert_eq!(cfg.clean.max_auto_clean_size, 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_config_with_gb_size() {
+        let toml = r#"
+[clean]
+max_auto_clean_size = "2GB"
+"#;
+        let cfg = parse_and_validate(toml).unwrap();
+        assert_eq!(cfg.clean.max_auto_clean_size, 2 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_config_with_raw_int_size_backward_compat() {
+        let toml = r#"
+[clean]
+max_auto_clean_size = 104857600
+"#;
+        let cfg = parse_and_validate(toml).unwrap();
+        assert_eq!(cfg.clean.max_auto_clean_size, 104857600);
+    }
+
+    #[test]
+    fn test_config_rejects_kb_size() {
+        let toml = r#"
+[clean]
+max_auto_clean_size = "500KB"
+"#;
+        let result = parse_and_validate(toml);
+        assert!(result.is_err(), "KB should be rejected");
     }
 }

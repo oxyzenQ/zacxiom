@@ -116,9 +116,11 @@ default_mode = "safe"
 # File-name patterns that are NEVER cleanable (legacy field).
 # protect_patterns = ["id_rsa", "id_ed25519"]
 
-# Files larger than this (bytes) in user directories require explicit --force.
-# Default: 104857600 (100 MB). Prevents accidental bulk deletion of large files.
-max_auto_clean_size = 104857600
+# Files larger than this in user directories require explicit --force.
+# v13: Human-readable — use "100MB" or "1GB" (case-insensitive, space-tolerant).
+# Raw bytes also accepted (e.g. 104857600) for backward compatibility.
+# Default: "100MB". Prevents accidental bulk deletion of large files.
+max_auto_clean_size = "100MB"
 
 # First-time users get automatic dry-run unless they pass --yes.
 # Default: true — zero data loss risk for new users.

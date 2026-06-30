@@ -13,10 +13,9 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "zacxiom",
     version,
-    about = "Easy to use intelligence cleaning in userspace",
-    long_about = "Easy to use intelligence cleaning in userspace.\n\
-                  Safe-by-default filesystem cleanup with full explainability.\n\
-                  Every decision is justified. Every action is logged.\n\n\
+    about = "Safe filesystem cleaning, explained.",
+    long_about = "Safe filesystem cleaning, explained.\n\
+                  Clean safely. Explain every decision. Recover anything.\n\n\
                   Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal\n\n\
                   v13: User-controlled safety — --exclude, config.toml, --testconf.",
     disable_version_flag = true
