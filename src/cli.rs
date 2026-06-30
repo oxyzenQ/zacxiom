@@ -121,6 +121,13 @@ pub enum Command {
         /// Exclude paths/patterns from cleaning (e.g. --exclude "~/Downloads" --exclude "*.iso")
         #[arg(long)]
         exclude: Vec<String>,
+        /// v13: Only clean files matching these patterns (whitelist mode).
+        /// Example: --include "target/*" --include "node_modules/*"
+        #[arg(long)]
+        include: Vec<String>,
+        /// v13: Stop on first error instead of continuing.
+        #[arg(long)]
+        fail_fast: bool,
         /// Auto-confirm all prompts (skip dry-run, skip confirmation)
         /// Required for non-interactive use (CI/scripts)
         #[arg(long)]

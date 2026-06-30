@@ -11,7 +11,7 @@
 //! - Exclude filter respected (config + CLI + .zacxiomignore)
 //! - Protected extensions (.iso, .vmdk, .pem, etc.) NEVER cleaned
 
-use crate::cleaner;
+use crate::cleaner::{self, CleanOptions};
 use crate::confidence;
 use crate::config::Config;
 use crate::domain;
@@ -38,19 +38,39 @@ pub fn run_clean(
     cfg: &Config,
     cli_exclude: &[String],
     yes: bool,
+    fail_fast: bool,
+    include_patterns: &[String],
 ) {
     let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
     let roots = pipeline::resolve_roots(paths);
     let exclude = pipeline::build_exclude_filter(cfg, cli_exclude);
-    let entries = scanner::scan(&roots, depth, 1, true, &exclude);
+    let effective_min_size = cfg.scan.min_size;
+    let entries = scanner::scan(&roots, depth, effective_min_size, true, &exclude);
     prog.advance();
     let threads = pipeline::optimal_threads(entries.len());
     prog.set_threads(threads);
-    let classified = pipeline::classify(entries, &ctx, threads, cfg);
+    let mut classified = pipeline::classify(entries, &ctx, threads, cfg);
     prog.advance();
     prog.advance();
     prog.done();
+
+    // v13: --include whitelist mode — only keep files matching the patterns
+    if !include_patterns.is_empty() {
+        classified.retain(|f| {
+            let path = std::path::Path::new(&f.path);
+            let path_str = path.to_string_lossy();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            include_patterns.iter().any(|pat| {
+                if let Ok(glob) = globset::Glob::new(pat) {
+                    let m = glob.compile_matcher();
+                    m.is_match(path_str.as_ref()) || m.is_match(name)
+                } else {
+                    false
+                }
+            })
+        });
+    }
 
     // v13: Determine if this is a first-run (no snapshots exist yet)
     let first_run = snapshot::Snapshot::list_all().is_empty();
@@ -119,8 +139,13 @@ pub fn run_clean(
     let snap_path = snap_dir.join(&snap.id);
     let report = cleaner::clean(
         &classified,
-        effective_smart,
-        effective_force,
+        &CleanOptions {
+            smart: effective_smart,
+            force: effective_force,
+            fail_fast,
+            verify_checksum: cfg.trash.verify_checksum,
+            show_progress: !json,
+        },
         &trash_for_snap,
         &mut snap,
         &snap_path,

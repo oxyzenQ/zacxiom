@@ -182,13 +182,15 @@ fn main() {
             verbose,
             json,
             exclude,
+            include,
+            fail_fast,
             yes,
         } => {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
             commands::run_clean(
                 all_paths, depth, smart, force, dry_run, verbose, json, &profile, &cfg, &exclude,
-                yes,
+                yes, fail_fast, &include,
             )
         }
 
