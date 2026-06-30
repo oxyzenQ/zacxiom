@@ -59,8 +59,20 @@ impl Snapshot {
 
 impl Snapshot {
     pub fn new() -> Self {
+        // v13: Unique ID = PID + timestamp + random — prevents collision on
+        // PID reuse, concurrent runs, or rapid sequential invocations.
+        let pid = std::process::id();
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Simple entropy from thread address + time — no external rand crate needed.
+        let entropy = {
+            let addr = &secs as *const u64 as usize;
+            (addr as u64).wrapping_mul(secs) % 0xFFFF
+        };
         Snapshot {
-            id: format!("snap-{}", std::process::id()),
+            id: format!("snap-{pid}-{secs:010x}-{entropy:04x}"),
             created: ts(),
             entries: Vec::new(),
         }

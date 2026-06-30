@@ -221,11 +221,11 @@ pub fn classify(
         None
     };
 
-    let result = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .expect("rayon pool")
-        .install(|| {
+    // v13: Build rayon pool with graceful fallback — never panic on thread creation failure.
+    // If pool build fails (rare: resource limits), fall back to sequential iteration.
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build();
+    let result = match pool {
+        Ok(p) => p.install(|| {
             entries
                 .into_par_iter()
                 .map(|e| {
@@ -351,7 +351,117 @@ pub fn classify(
                     scored
                 })
                 .collect()
-        });
+        }),
+        Err(e) => {
+            // Pool build failed — fall back to sequential iteration.
+            // This is rare (only on systems with severe resource limits) but we must never panic.
+            eprintln!("Warning: thread pool creation failed ({e}), falling back to single-threaded mode");
+            entries
+                .into_iter()
+                .map(|e| {
+                    let d = crate::cache::classify(&e.path);
+                    let o = crate::ownership::detect(&e.path);
+                    let path_str = e.path.to_string_lossy().into_owned();
+                    let age = crate::risk::file_age_days(&path_str);
+                    let modif = ctx.memory.risk_modifier(&path_str);
+                    let mut scored = crate::risk::score_v3(&crate::risk::RiskSignals {
+                        path: &path_str,
+                        size: e.size,
+                        domain: &d,
+                        ownership: &o,
+                        open_files: Some(get_open_files()),
+                        history_cleaned: Some(&ctx.history_cleaned),
+                        memory_modifier: modif,
+                        age_days: age,
+                    });
+                    if modif != 0.0 {
+                        scored.risk_reasons.push(format!(
+                            "memory: adaptive modifier {modif:+.3} (sessions: {})",
+                            ctx.memory.sessions
+                        ));
+                    }
+                    let eng = crate::engine::classify_fast(&e.path);
+                    scored.engine_category = eng.0.to_string();
+                    scored.engine_confidence = eng.1;
+
+                    if scored.decision == rules::Decision::Safe {
+                        if eng.0 == "Toolchain Installation"
+                            || eng.0 == "Toolchain Manager"
+                            || eng.0 == "Installed Software"
+                            || eng.0 == "Dependency Source"
+                        {
+                            scored.decision = rules::Decision::LowRisk;
+                            scored.risk_reasons.push(
+                                "Not disposable cache — regenerable but expensive to restore, requires --smart".into(),
+                            );
+                        }
+                        else if eng.0.contains("Downloaded") {
+                            scored.decision = rules::Decision::LowRisk;
+                            scored.risk_reasons.push(
+                                "Downloaded artifact: regenerable but expensive to restore".into(),
+                            );
+                        }
+                    }
+
+                    if matches!(
+                        eng.0,
+                        "System Binary"
+                            | "System Configuration"
+                            | "System Data"
+                            | "Virtual Filesystem"
+                            | "Security Credential"
+                            | "Project Workspace"
+                            | "Source Code Directory"
+                            | "Package Manifest"
+                            | "Project Asset"
+                            | "Installed Software"
+                    ) {
+                        scored.decision = rules::Decision::Protected;
+                        scored.risk_reasons.push(format!(
+                            "Engine classified as protected: {} — never cleanable",
+                            eng.0
+                        ));
+                        scored.risk_score = 1.0;
+                    }
+
+                    if let Some(active_env) = crate::environment::is_active_environment(&e.path) {
+                        scored.decision = rules::Decision::ProtectedActiveEnvironment;
+                        scored.risk_reasons.push(format!(
+                            "Active environment: {} — {}",
+                            active_env.name, active_env.stack
+                        ));
+                        scored.risk_score = 1.0;
+                    }
+
+                    let path_obj = std::path::Path::new(&path_str);
+                    let is_excluded = rules::matches_rules_exclude(path_obj, &cfg.rules_exclude.exclude)
+                        || rules::has_protected_extension(path_obj)
+                        || rules::matches_protected_pattern(path_obj, &cfg.clean.protect_patterns);
+                    if is_excluded {
+                        scored.decision = rules::Decision::Protected;
+                        scored.risk_reasons.push(
+                            "Rules-excluded file (disk image / crypto key / user pattern) — never cleanable".into(),
+                        );
+                        scored.risk_score = 1.0;
+                    }
+
+                    if scored.decision == rules::Decision::Safe
+                        && scored.size > cfg.clean.max_auto_clean_size
+                        && crate::scanner::is_user_content_dir(path_obj)
+                    {
+                        scored.decision = rules::Decision::Moderate;
+                        scored.risk_reasons.push(format!(
+                            "Large file ({}) in user directory — requires --force",
+                            crate::simulator::human_size(scored.size)
+                        ));
+                    }
+
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    scored
+                })
+                .collect()
+        }
+    };
     result
 }
 
