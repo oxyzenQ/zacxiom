@@ -588,9 +588,9 @@ mod tests {
     #[test]
     fn test_invalid_default_mode_typo() {
         let mut cfg = Config::default();
-        cfg.clean.default_mode = "sav".into(); // typo
+        cfg.clean.default_mode = "savv".into(); // intentional typo of "safe"
         let err = validate_semantic(&cfg).unwrap_err();
-        assert!(err.contains("sav"));
+        assert!(err.contains("savv"));
     }
 
     #[test]

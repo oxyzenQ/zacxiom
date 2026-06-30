@@ -210,13 +210,17 @@ pub fn clean(
 }
 
 /// Build a unique trash path using SHA-256 hash of the original path.
-/// Avoids filesystem filename length limits (NAME_MAX).
+/// Avoids filesystem filename length limits (NAME_MAX) and provides
+/// cryptographic collision resistance (256-bit vs 64-bit DefaultHasher).
+/// Uses first 32 hex chars (128 bits) — sufficient for uniqueness.
 fn build_trash_path(trash_dir: &Path, original_path: &str) -> PathBuf {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    original_path.hash(&mut hasher);
-    let hash = hasher.finish();
-    trash_dir.join(format!("{hash:016x}"))
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(original_path.as_bytes());
+    let hash = hasher.finalize();
+    // Take first 16 bytes (128 bits) → 32 hex chars
+    let hex: String = hash.iter().take(16).map(|b| format!("{b:02x}")).collect();
+    trash_dir.join(hex)
 }
 
 /// Batched incremental snapshot save — fires every N file moves.

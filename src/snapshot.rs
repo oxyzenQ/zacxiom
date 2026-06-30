@@ -97,7 +97,16 @@ impl Snapshot {
     }
 
     pub fn load(id: &str) -> Result<Self, String> {
-        let path = snapshot_dir().join(id);
+        // v13: Try XDG dir first, then legacy for backward compat
+        let xdg_path = snapshot_dir().join(id);
+        let legacy_path = snapshot_dir_legacy().join(id);
+        let path = if xdg_path.exists() {
+            xdg_path
+        } else if legacy_path.exists() {
+            legacy_path
+        } else {
+            xdg_path // will produce a readable error
+        };
         let data = fs::read_to_string(&path).map_err(|e| format!("read: {e}"))?;
         serde_json::from_str(&data).map_err(|e| format!("parse: {e}"))
     }
@@ -105,31 +114,37 @@ impl Snapshot {
     /// List all available snapshot IDs, sorted newest-first by modification time.
     /// Gracefully skips unreadable entries and broken symlinks.
     pub fn list_all() -> Vec<String> {
-        let dir = snapshot_dir();
-        if !dir.exists() {
-            return vec![];
-        }
+        // v13: Check both XDG and legacy directories for backward compatibility
+        let dirs = [snapshot_dir(), snapshot_dir_legacy()];
         let mut snaps: Vec<(String, std::time::SystemTime)> = Vec::new();
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => return vec![],
-        };
-        for entry in entries {
-            let entry = match entry {
+        let mut seen = std::collections::HashSet::new();
+
+        for dir in &dirs {
+            if !dir.exists() {
+                continue;
+            }
+            let entries = match std::fs::read_dir(dir) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.starts_with("snap-") {
-                continue;
+            for entry in entries {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !name.starts_with("snap-") || seen.contains(&name) {
+                    continue;
+                }
+                // Use metadata() safely — skip entries that fail (broken symlinks, permissions)
+                let mtime = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                seen.insert(name.clone());
+                snaps.push((name, mtime));
             }
-            // Use metadata() safely — skip entries that fail (broken symlinks, permissions)
-            let mtime = entry
-                .metadata()
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            snaps.push((name, mtime));
         }
         // Sort newest-first by modification time
         snaps.sort_by_key(|b| std::cmp::Reverse(b.1));
@@ -179,25 +194,53 @@ impl Snapshot {
     }
 }
 
+/// Snapshot storage directory (XDG-compliant).
+///
+/// v13: Migrated from ~/.cache/zacxiom/snapshots to ~/.local/share/zacxiom/snapshots
+/// per XDG Base Directory Spec (snapshots are user data, not disposable cache).
+/// Respects XDG_DATA_HOME if set.
+///
+/// For backward compatibility, list_all() and load() also check the legacy
+/// ~/.cache/zacxiom/snapshots location.
 pub fn snapshot_dir() -> PathBuf {
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        PathBuf::from(xdg).join("zacxiom/snapshots")
+    } else {
+        let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
+        PathBuf::from(home).join(".local/share/zacxiom/snapshots")
+    }
+}
+
+/// Legacy snapshot directory (pre-v13). Used for backward-compatible reads.
+pub fn snapshot_dir_legacy() -> PathBuf {
     let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
     PathBuf::from(home).join(".cache/zacxiom/snapshots")
 }
 
 /// Base trash directory for recoverable file deletion.
 /// Files are moved here before snapshots record them.
+/// v13: XDG-compliant location.
 pub fn trash_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
-    PathBuf::from(home).join(".cache/zacxiom/trash")
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        PathBuf::from(xdg).join("zacxiom/trash")
+    } else {
+        let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
+        PathBuf::from(home).join(".local/share/zacxiom/trash")
+    }
 }
 
 /// Delete a snapshot by ID (metadata file only, not trash files).
+/// v13: Checks both XDG and legacy directories.
 pub fn delete_snapshot(id: &str) -> Result<(), String> {
-    let path = snapshot_dir().join(id);
-    if !path.exists() {
-        return Err(format!("Snapshot {id} not found"));
+    let xdg_path = snapshot_dir().join(id);
+    let legacy_path = snapshot_dir_legacy().join(id);
+    if xdg_path.exists() {
+        std::fs::remove_file(&xdg_path).map_err(|e| format!("Cannot delete {id}: {e}"))
+    } else if legacy_path.exists() {
+        std::fs::remove_file(&legacy_path).map_err(|e| format!("Cannot delete {id}: {e}"))
+    } else {
+        Err(format!("Snapshot {id} not found"))
     }
-    std::fs::remove_file(&path).map_err(|e| format!("Cannot delete {id}: {e}"))
 }
 
 impl Snapshot {
@@ -242,20 +285,24 @@ pub fn snapshot_age(id: &str) -> String {
 }
 
 /// Get snapshot creation timestamp as seconds since epoch.
+/// v13: Checks both XDG and legacy directories.
 pub fn snapshot_age_secs(id: &str) -> u64 {
-    let path = snapshot_dir().join(id);
-    if let Ok(data) = std::fs::read_to_string(&path) {
-        if let Ok(snap) = serde_json::from_str::<Snapshot>(&data) {
-            return snap.created.parse::<u64>().unwrap_or(0);
+    // Try XDG first, then legacy
+    for dir in &[snapshot_dir(), snapshot_dir_legacy()] {
+        let path = dir.join(id);
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(snap) = serde_json::from_str::<Snapshot>(&data) {
+                return snap.created.parse::<u64>().unwrap_or(0);
+            }
         }
-    }
-    // Fallback: use file mtime
-    if let Ok(meta) = std::fs::metadata(&path) {
-        if let Ok(mtime) = meta.modified() {
-            return mtime
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+        // Fallback: use file mtime
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if let Ok(mtime) = meta.modified() {
+                return mtime
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+            }
         }
     }
     0
