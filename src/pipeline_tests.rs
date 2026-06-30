@@ -51,7 +51,25 @@ fn classify_via_pipeline(path: &str) -> (Decision, confidence::Tier, String) {
         }
     }
 
-    // Step 4b: v13 Extension protection — disk images, crypto keys, etc.
+    // Step 4b: v13 Engine-protected category enforcement.
+    // If engine classifies as protected category, override to Protected.
+    if matches!(
+        engine_category.as_str(),
+        "System Binary"
+            | "System Configuration"
+            | "System Data"
+            | "Virtual Filesystem"
+            | "Security Credential"
+            | "Project Workspace"
+            | "Source Code Directory"
+            | "Package Manifest"
+            | "Project Asset"
+            | "Installed Software"
+    ) {
+        decision = Decision::Protected;
+    }
+
+    // Step 4c: v13 Extension protection — disk images, crypto keys, etc.
     // Must match pipeline::classify() behavior: override ANY decision to Protected.
     let path_obj = std::path::Path::new(path);
     if crate::rules::has_protected_extension(path_obj) {
@@ -344,6 +362,23 @@ fn trace_pipeline(path: &str) -> PipelineTrace {
             || engine_category.contains("Downloaded"))
     {
         final_decision = Decision::LowRisk;
+    }
+
+    // Step 5a: v13 Engine-protected category enforcement
+    if matches!(
+        engine_category.as_str(),
+        "System Binary"
+            | "System Configuration"
+            | "System Data"
+            | "Virtual Filesystem"
+            | "Security Credential"
+            | "Project Workspace"
+            | "Source Code Directory"
+            | "Package Manifest"
+            | "Project Asset"
+            | "Installed Software"
+    ) {
+        final_decision = Decision::Protected;
     }
 
     // Step 5b: v13 Extension protection

@@ -279,6 +279,33 @@ pub fn classify(
                         }
                     }
 
+                    // v13: Engine-protected category enforcement.
+                    // If the engine classifies a file as a protected category
+                    // (System Data, Security Credential, Project Workspace, etc.),
+                    // override ANY decision to Protected — never cleanable.
+                    // FIX: .git/HEAD was classified as Moderate by risk scoring
+                    // but engine said "System Data" → should be Protected.
+                    if matches!(
+                        eng.0,
+                        "System Binary"
+                            | "System Configuration"
+                            | "System Data"
+                            | "Virtual Filesystem"
+                            | "Security Credential"
+                            | "Project Workspace"
+                            | "Source Code Directory"
+                            | "Package Manifest"
+                            | "Project Asset"
+                            | "Installed Software"
+                    ) {
+                        scored.decision = rules::Decision::Protected;
+                        scored.risk_reasons.push(format!(
+                            "Engine classified as protected: {} — never cleanable",
+                            eng.0
+                        ));
+                        scored.risk_score = 1.0;
+                    }
+
                     // v11: Active Environment Protection
                     // Applies to ALL decisions, not just Safe.
                     // Override ANY decision to ProtectedActiveEnvironment

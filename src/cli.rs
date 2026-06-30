@@ -51,7 +51,7 @@ pub enum Command {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         /// Positional paths (alternative: zacxiom scan ~/.cache)
-        #[arg(num_args = 0.., trailing_var_arg = true)]
+        #[arg(num_args = 0..)]
         positional_paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
@@ -98,7 +98,7 @@ pub enum Command {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         /// Positional paths (alternative: zacxiom clean ~/.cache)
-        #[arg(num_args = 0.., trailing_var_arg = true)]
+        #[arg(num_args = 0..)]
         positional_paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
@@ -167,7 +167,7 @@ pub enum Command {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         /// Positional paths
-        #[arg(num_args = 0.., trailing_var_arg = true)]
+        #[arg(num_args = 0..)]
         positional_paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
@@ -199,7 +199,7 @@ pub enum Command {
         #[arg(short = 'P', long, num_args = 0..)]
         paths: Vec<String>,
         /// Positional paths
-        #[arg(num_args = 0.., trailing_var_arg = true)]
+        #[arg(num_args = 0..)]
         positional_paths: Vec<String>,
         #[arg(short, long, default_value = "0")]
         depth: usize,
