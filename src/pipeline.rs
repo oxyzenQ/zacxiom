@@ -5,6 +5,8 @@
 //!
 //! Extracted from main.rs to keep the entrypoint lean.
 
+use crate::config::Config;
+use crate::exclude::ExcludeFilter;
 use crate::rules;
 use crate::scanner;
 use std::collections::HashSet;
@@ -77,6 +79,20 @@ pub fn resolve_roots(paths: Vec<String>) -> Vec<PathBuf> {
     }
 }
 
+/// v13: Build the effective exclude filter from config + CLI flags.
+/// CLI excludes are appended to config excludes.
+pub fn build_exclude_filter(cfg: &Config, cli_exclude: &[String]) -> ExcludeFilter {
+    match ExcludeFilter::build(&cfg.scan.exclude, &cfg.scan.exclude_patterns, cli_exclude) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Warning: invalid exclude pattern in config or CLI: {e}");
+            eprintln!("  Continuing with config-only excludes.");
+            ExcludeFilter::build(&cfg.scan.exclude, &cfg.scan.exclude_patterns, &[])
+                .unwrap_or_else(|_| ExcludeFilter::empty())
+        }
+    }
+}
+
 /// Determine optimal thread count based on workload size.
 /// Small: 2 threads. Medium: half of logical CPUs. Large: all CPUs.
 pub fn optimal_threads(file_count: usize) -> usize {
@@ -96,6 +112,7 @@ pub fn classify(
     entries: Vec<scanner::ScanEntry>,
     ctx: &RunContext,
     threads: usize,
+    cfg: &Config,
 ) -> Vec<rules::ClassifiedFile> {
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -220,6 +237,33 @@ pub fn classify(
                         ));
                         scored.risk_score = 1.0;
                     }
+                    // v13: Extension protection — disk images, crypto keys, etc.
+                    // Override ANY decision to Protected if the file has a protected extension.
+                    // This is a hard safety net — even if the path is in /tmp or a cache dir,
+                    // an .iso file is NEVER cleanable.
+                    let path_obj = std::path::Path::new(&path_str);
+                    if rules::has_protected_extension(path_obj)
+                        || rules::matches_protected_pattern(path_obj, &cfg.clean.protect_patterns)
+                    {
+                        scored.decision = rules::Decision::Protected;
+                        scored.risk_reasons.push(
+                            "Protected file extension (disk image / crypto key) — never cleanable".into(),
+                        );
+                        scored.risk_score = 1.0;
+                    }
+
+                    // v13: Size-based protection — large files in user-content dirs need explicit --force
+                    if scored.decision == rules::Decision::Safe
+                        && scored.size > cfg.clean.max_auto_clean_size
+                        && crate::scanner::is_user_content_dir(path_obj)
+                    {
+                        scored.decision = rules::Decision::Moderate;
+                        scored.risk_reasons.push(format!(
+                            "Large file ({}) in user directory — requires --force",
+                            crate::simulator::human_size(scored.size)
+                        ));
+                    }
+
                     counter.fetch_add(1, Ordering::Relaxed);
                     scored
                 })

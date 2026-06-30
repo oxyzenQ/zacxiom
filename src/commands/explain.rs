@@ -3,7 +3,9 @@
 
 //! `zacxiom explain` — detailed path classification command.
 
+use crate::config::Config;
 use crate::discovery;
+use crate::exclude::ExcludeFilter;
 use crate::explain;
 use crate::pipeline::{self, RunContext};
 use crate::scanner;
@@ -21,7 +23,7 @@ fn resolve_path(path: &str) -> PathBuf {
     }
 }
 
-pub fn run_explain(path: &str) {
+pub fn run_explain(path: &str, cfg: &Config) {
     // v10: resolve relative paths to absolute for consistent behavior
     let target = resolve_path(path);
     if !target.exists() {
@@ -61,7 +63,7 @@ pub fn run_explain(path: &str) {
         };
         let entries = vec![entry];
         let threads = 1;
-        let classified = pipeline::classify(entries, &ctx, threads);
+        let classified = pipeline::classify(entries, &ctx, threads, cfg);
         let mut eng = crate::engine::classify(&target);
         explain::upgrade_workspace(&mut eng);
         explain::fix_home_inheritance(&mut eng);
@@ -88,9 +90,9 @@ pub fn run_explain(path: &str) {
 
     // Directory — scan only that directory, not parent; use sufficient depth
     let roots = vec![classify_target.clone()];
-    let entries = scanner::scan(&roots, 8, 1, true);
+    let entries = scanner::scan(&roots, 8, 1, true, &ExcludeFilter::empty());
     let threads = pipeline::optimal_threads(entries.len());
-    let classified = pipeline::classify(entries, &ctx, threads);
+    let classified = pipeline::classify(entries, &ctx, threads, cfg);
 
     let mut eng = crate::engine::classify(classify_target);
     explain::upgrade_workspace(&mut eng);

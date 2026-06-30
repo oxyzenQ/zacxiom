@@ -6,6 +6,5 @@
   Snapshots : <NUM> available
   Memory    : <NUM> sessions, <NUM> trusted, <NUM> flagged
   Stability : <STABILITY>
-  Last snap : <SNAP-ID>
   Safety    : PASS
 ────────────

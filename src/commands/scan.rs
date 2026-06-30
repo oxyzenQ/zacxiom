@@ -4,6 +4,7 @@
 //! `zacxiom scan` — filesystem scan command.
 
 use crate::confidence;
+use crate::config::Config;
 use crate::display;
 use crate::domain;
 use crate::inspect;
@@ -12,6 +13,7 @@ use crate::progress;
 use crate::scanner;
 use crate::summary;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_scan(
     paths: Vec<String>,
     depth: usize,
@@ -19,15 +21,46 @@ pub fn run_scan(
     json: bool,
     verbose: bool,
     profile: &str,
+    cfg: &Config,
+    cli_exclude: &[String],
 ) {
     let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
     let roots = pipeline::resolve_roots(paths);
-    let entries = scanner::scan(&roots, depth, min_size, true);
+
+    // v13: Warn when scanning user-content directories
+    if cfg.scan.warn_user_dirs && !json {
+        for root in &roots {
+            if scanner::is_user_content_dir(root) {
+                eprintln!(
+                    "⚠ Warning: scanning user-content directory: {}",
+                    root.display()
+                );
+                eprintln!(
+                    "  Use --exclude to skip subdirectories or patterns (e.g. --exclude \"*.iso\")"
+                );
+                eprintln!(
+                    "  Or add to config: [scan].exclude = [\"{}\"]",
+                    root.display()
+                );
+                break;
+            }
+        }
+    }
+
+    // v13: Build exclude filter from config + CLI
+    let exclude = pipeline::build_exclude_filter(cfg, cli_exclude);
+    let effective_min_size = if min_size > 1 {
+        min_size
+    } else {
+        cfg.scan.min_size
+    };
+
+    let entries = scanner::scan(&roots, depth, effective_min_size, true, &exclude);
     prog.advance();
     let threads = pipeline::optimal_threads(entries.len());
     prog.set_threads(threads);
-    let classified = pipeline::classify(entries, &ctx, threads);
+    let classified = pipeline::classify(entries, &ctx, threads, cfg);
     prog.advance();
     prog.advance();
     prog.done();

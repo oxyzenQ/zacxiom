@@ -3,6 +3,8 @@ Every decision is justified. Every action is logged.
 
 Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal
 
+v13: User-controlled safety — --exclude, config.toml, --testconf.
+
 Usage: zacxiom [OPTIONS] [COMMAND]
 
 Commands:
@@ -19,6 +21,8 @@ Commands:
   check-update        Check for latest upstream release
   explain-confidence  Show complete confidence calculation for a path
   explain-risk        Show detailed risk reasoning for a path
+  snapshot            Manage cleanup snapshots — list, delete, prune, purge
+  config              Manage user configuration (v13)
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -28,8 +32,12 @@ Options:
       --check-update
           Check for latest upstream release
 
+      --testconf
+          Validate config file and exit (does not run any command)
+
   -h, --help
           Print help (see a summary with '-h')
 
 💡 Quick start: zacxiom scan → zacxiom plan → zacxiom clean
    All destructive commands are recoverable with zacxiom undo
+   v13: Use --exclude to protect specific paths/patterns

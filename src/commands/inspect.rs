@@ -3,16 +3,24 @@
 
 //! `zacxiom inspect-unknown` — unknown domain intelligence command.
 
+use crate::config::Config;
+use crate::exclude::ExcludeFilter;
 use crate::inspect;
 use crate::pipeline::{self, RunContext};
 use crate::scanner;
 
-pub fn run_inspect_unknown(paths: Vec<String>, depth: usize, json: bool, verbose: bool) {
+pub fn run_inspect_unknown(
+    paths: Vec<String>,
+    depth: usize,
+    json: bool,
+    verbose: bool,
+    cfg: &Config,
+) {
     let ctx = RunContext::new("dev");
     let roots = pipeline::resolve_roots(paths);
-    let entries = scanner::scan(&roots, depth, 1, true);
+    let entries = scanner::scan(&roots, depth, 1, true, &ExcludeFilter::empty());
     let threads = pipeline::optimal_threads(entries.len());
-    let classified = pipeline::classify(entries, &ctx, threads);
+    let classified = pipeline::classify(entries, &ctx, threads, cfg);
 
     let breakdown = inspect::analyze(&classified);
 

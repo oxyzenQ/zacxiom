@@ -2,16 +2,28 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! `zacxiom clean` — cleanup execution command.
+//!
+//! v13: Safety-first redesign:
+//! - Default dry-run on first use (unless --yes)
+//! - Confirmation prompt for --smart and --force (unless --yes)
+//! - --force NO LONGER allows HighRisk files (those need manual `rm`)
+//! - safety::validate_clean is called before any deletion
+//! - Exclude filter respected (config + CLI + .zacxiomignore)
+//! - Protected extensions (.iso, .vmdk, .pem, etc.) NEVER cleaned
 
 use crate::cleaner;
 use crate::confidence;
+use crate::config::Config;
 use crate::domain;
 use crate::pipeline::{self, RunContext};
 use crate::progress;
 use crate::rules;
+use crate::safety;
 use crate::scanner;
 use crate::simulator;
 use crate::snapshot;
+
+use std::io::{self, Write};
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_clean(
@@ -23,210 +35,79 @@ pub fn run_clean(
     verbose: bool,
     json: bool,
     profile: &str,
+    cfg: &Config,
+    cli_exclude: &[String],
+    yes: bool,
 ) {
     let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
     let roots = pipeline::resolve_roots(paths);
-    let entries = scanner::scan(&roots, depth, 1, true);
+    let exclude = pipeline::build_exclude_filter(cfg, cli_exclude);
+    let entries = scanner::scan(&roots, depth, 1, true, &exclude);
     prog.advance();
     let threads = pipeline::optimal_threads(entries.len());
     prog.set_threads(threads);
-    let classified = pipeline::classify(entries, &ctx, threads);
+    let classified = pipeline::classify(entries, &ctx, threads, cfg);
     prog.advance();
     prog.advance();
     prog.done();
 
-    if dry_run {
-        // v10: JSON output support for dry-run
+    // v13: Determine if this is a first-run (no snapshots exist yet)
+    let first_run = snapshot::Snapshot::list_all().is_empty();
+    // v13: Apply config default_mode if no explicit flag given
+    let effective_smart = smart || (!force && cfg.clean.default_mode == "smart");
+    let effective_force = force;
+
+    // v13: Default dry-run on first use (Option A — safe-default)
+    // Unless --yes is given, first-time users get a dry-run preview
+    let effective_dry_run = dry_run || (cfg.clean.first_run_dry_run && first_run && !yes && !json);
+
+    if effective_dry_run && !dry_run && first_run && !yes && !json {
+        println!();
+        println!("━━━ FIRST RUN — DRY RUN PREVIEW ━━━");
+        println!("  This is your first clean operation. Zacxiom is showing a preview");
+        println!("  instead of deleting files. To actually clean, re-run with --yes:");
+        println!("    zacxiom clean --yes");
+        println!();
+    }
+
+    if effective_dry_run {
+        run_dry_run(&classified, effective_smart, effective_force, json, verbose);
+        return;
+    }
+
+    // v13: Pre-deletion safety gate — wire safety::validate_clean (was dead code!)
+    let safety_check = safety::validate_clean(&classified, effective_smart, effective_force, true);
+    if !safety_check.passed {
         if json {
-            let cleanable: Vec<_> = classified
-                .iter()
-                .filter(|f| f.decision.is_cleanable(smart, force))
-                .collect();
-            let skipped: Vec<_> = classified
-                .iter()
-                .filter(|f| !f.decision.is_cleanable(smart, force))
-                .collect();
-            let mode = if force {
-                "force"
-            } else if smart {
-                "smart"
-            } else {
-                "safe"
-            };
             let out = serde_json::json!({
-                "mode": mode,
-                "total_cleanable": cleanable.len(),
-                "total_cleanable_size": cleanable.iter().map(|f| f.size).sum::<u64>(),
-                "total_skipped": skipped.len(),
-                "total_skipped_size": skipped.iter().map(|f| f.size).sum::<u64>(),
-                "files": cleanable.iter().map(|f| serde_json::json!({
-                    "path": f.path,
-                    "size": f.size,
-                    "decision": format!("{:?}", f.decision),
-                })).collect::<Vec<_>>(),
+                "status": "aborted",
+                "reason": "safety_check_failed",
+                "violations": safety_check.violations,
             });
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
-            return;
-        }
-        // v6.2.2: clean summary, no box art
-        let cleanable: Vec<_> = classified
-            .iter()
-            .filter(|f| f.decision.is_cleanable(smart, force))
-            .collect();
-        let skipped: Vec<_> = classified
-            .iter()
-            .filter(|f| !f.decision.is_cleanable(smart, force))
-            .collect();
-
-        let to_clean_size: u64 = cleanable.iter().map(|f| f.size).sum();
-        let skipped_size: u64 = skipped.iter().map(|f| f.size).sum();
-
-        let mode = if force {
-            "force"
-        } else if smart {
-            "smart"
         } else {
-            "safe"
-        };
-
-        // Time estimate
-        let estimate_secs = cleanable.len() as f64 / 500.0;
-        let time_str = if estimate_secs < 1.0 || cleanable.len() < 10 {
-            "< 1 second".to_string()
-        } else if estimate_secs < 60.0 {
-            format!("~{:.0} seconds", estimate_secs.ceil())
-        } else {
-            format!("~{:.0} minutes", (estimate_secs / 60.0).ceil())
-        };
-
-        println!();
-        println!("DRY RUN — Estimated Cleanup");
-        println!("───────────────────────────");
-        println!(
-            "  Mode: {mode} ({})",
-            if force {
-                "★★★★★ + ★★★★ + ★★★"
-            } else if smart {
-                "★★★★★ + ★★★★"
-            } else {
-                "★★★★★ only"
+            eprintln!();
+            eprintln!("━━━ SAFETY CHECK FAILED — ABORTING ━━━");
+            for v in &safety_check.violations {
+                eprintln!("  • {v}");
             }
-        );
-        println!("  ≈ {} files", cleanable.len());
-        println!("  ≈ {} recovered", simulator::human_size(to_clean_size));
-        println!("  ≈ {}", time_str);
-
-        // Space accounting: safe vs review vs total
-        let owned_cleanable: Vec<rules::ClassifiedFile> =
-            cleanable.iter().map(|f| (*f).clone()).collect();
-        let cs = confidence::ConfidenceSummary::from_files(&owned_cleanable);
-
-        let safe_size: u64 = owned_cleanable
-            .iter()
-            .filter(|f| matches!(confidence::confidence(f), confidence::Tier::Maximum))
-            .map(|f| f.size)
-            .sum();
-        let review_size: u64 = owned_cleanable
-            .iter()
-            .filter(|f| {
-                matches!(
-                    confidence::confidence(f),
-                    confidence::Tier::High | confidence::Tier::Moderate
-                )
-            })
-            .map(|f| f.size)
-            .sum();
-
-        println!(
-            "  Safe (★★★★★):  {} files ({})",
-            cs.maximum,
-            simulator::human_size(safe_size)
-        );
-        println!(
-            "  Review (★★★+): {} files ({})",
-            cs.high + cs.moderate,
-            simulator::human_size(review_size)
-        );
-        println!(
-            "  Total:         {} files ({})",
-            cleanable.len(),
-            simulator::human_size(to_clean_size)
-        );
-        println!(
-            "  Would skip:    {} files ({})",
-            skipped.len(),
-            simulator::human_size(skipped_size)
-        );
-
-        // Domain breakdown (summary-first)
-        let domains = domain::summarize(&owned_cleanable);
-        if !domains.is_empty() {
-            println!("\n  WOULD CLEAN BY DOMAIN\n");
-            for d in domains.iter().take(10) {
-                // v6.4.0: Use dominant decision + risk_score to compute tier.
-                // Pure risk_score mapping ignores the bridge override that
-                // changes toolchain files from Safe to LowRisk.
-                // LOWRISK/MIXED-dominant domains (e.g. toolchains) → ★★★★ High.
-                let tier = if d.dominant_decision == "SAFE" {
-                    confidence::Tier::Maximum
-                } else if d.dominant_decision == "BLOCKED" {
-                    confidence::Tier::Protected
-                } else if d.dominant_decision == "LOWRISK" || d.dominant_decision == "MIXED" {
-                    confidence::Tier::High // ★★★★ — requires --smart
-                } else if d.risk_score < 0.15 {
-                    confidence::Tier::Maximum
-                } else if d.risk_score < 0.35 {
-                    confidence::Tier::High
-                } else {
-                    confidence::Tier::Moderate
-                };
-                println!(
-                    "  {} {:<35} {:>5} files  {}",
-                    tier.stars(),
-                    d.domain,
-                    d.file_count as i64,
-                    simulator::human_size(d.total_size)
-                );
-            }
-            if domains.len() > 10 {
-                println!("  ... and {} more domains", domains.len() - 10);
-            }
+            eprintln!();
+            eprintln!("  No files were modified. Fix the violations and try again.");
         }
+        std::process::exit(3);
+    }
 
-        // Top contributors (v6.2.1)
-        let top = pipeline::top_contributors(&owned_cleanable, 8);
-        if !top.is_empty() {
-            println!("\n  TOP CONTRIBUTORS\n");
-            for (name, count, size) in &top {
-                println!(
-                    "  {:<40} {:>4} files  {}",
-                    name,
-                    count,
-                    simulator::human_size(*size)
-                );
-            }
-        }
-
-        // File list only with --verbose
-        if verbose && !cleanable.is_empty() {
-            println!("\n  FILES\n");
-            for f in cleanable.iter().take(50) {
-                let tier = confidence::confidence(f);
-                println!(
-                    "  {} {}  {}",
-                    tier.stars(),
-                    simulator::human_size(f.size),
-                    f.path
-                );
-            }
-            if cleanable.len() > 50 {
-                println!("  ... and {} more files", cleanable.len() - 50);
-            }
-        } else if !cleanable.is_empty() && !verbose {
-            println!("\n  (use --verbose for file list)");
-        }
-        return;
+    // v13: Confirmation prompt for --smart and --force (unless --yes)
+    let needs_confirmation =
+        (effective_force || effective_smart) && cfg.clean.require_confirmation && !yes;
+    if needs_confirmation
+        && !json
+        && !confirm_deletion(&classified, effective_smart, effective_force)
+    {
+        eprintln!();
+        eprintln!("  Aborted. No files were modified.");
+        std::process::exit(0);
     }
 
     // Actual clean — v10: trash-based recovery
@@ -238,8 +119,8 @@ pub fn run_clean(
     let snap_path = snap_dir.join(&snap.id);
     let report = cleaner::clean(
         &classified,
-        smart,
-        force,
+        effective_smart,
+        effective_force,
         &trash_for_snap,
         &mut snap,
         &snap_path,
@@ -350,6 +231,255 @@ pub fn run_clean(
     }
 
     report_errors(&report);
+}
+
+/// v13: Interactive confirmation prompt for --smart and --force modes.
+/// Returns true if user confirmed, false if they declined.
+fn confirm_deletion(classified: &[rules::ClassifiedFile], smart: bool, force: bool) -> bool {
+    let cleanable: Vec<_> = classified
+        .iter()
+        .filter(|f| f.decision.is_cleanable(smart, force))
+        .collect();
+
+    let total_size: u64 = cleanable.iter().map(|f| f.size).sum();
+    let mode = if force {
+        "FORCE"
+    } else if smart {
+        "SMART"
+    } else {
+        "SAFE"
+    };
+
+    println!();
+    println!("━━━ CONFIRMATION REQUIRED ({mode} mode) ━━━");
+    println!("  Files to delete : {}", cleanable.len());
+    println!("  Total size      : {}", simulator::human_size(total_size));
+    println!();
+    println!("  Top 5 paths:");
+    let mut sorted = cleanable.clone();
+    sorted.sort_by_key(|f| std::cmp::Reverse(f.size));
+    for f in sorted.iter().take(5) {
+        println!("    {}  {}", simulator::human_size(f.size), f.path);
+    }
+    if cleanable.len() > 5 {
+        println!("    ... and {} more", cleanable.len() - 5);
+    }
+    println!();
+    println!("  All deleted files are recoverable via `zacxiom undo` (trash-based).");
+    println!();
+
+    if force {
+        // --force requires typing "DELETE" (stronger confirmation)
+        print!("  Type \"DELETE\" to confirm (or anything else to abort): ");
+    } else {
+        // --smart requires typing "yes"
+        print!("  Type \"yes\" to confirm (or anything else to abort): ");
+    }
+    io::stdout().flush().ok();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    let input = input.trim();
+    if force {
+        input == "DELETE"
+    } else {
+        input == "yes" || input == "y" || input == "YES"
+    }
+}
+
+/// Run dry-run preview (extracted from original clean.rs).
+fn run_dry_run(
+    classified: &[rules::ClassifiedFile],
+    smart: bool,
+    force: bool,
+    json: bool,
+    verbose: bool,
+) {
+    if json {
+        let cleanable: Vec<_> = classified
+            .iter()
+            .filter(|f| f.decision.is_cleanable(smart, force))
+            .collect();
+        let skipped: Vec<_> = classified
+            .iter()
+            .filter(|f| !f.decision.is_cleanable(smart, force))
+            .collect();
+        let mode = if force {
+            "force"
+        } else if smart {
+            "smart"
+        } else {
+            "safe"
+        };
+        let out = serde_json::json!({
+            "mode": mode,
+            "total_cleanable": cleanable.len(),
+            "total_cleanable_size": cleanable.iter().map(|f| f.size).sum::<u64>(),
+            "total_skipped": skipped.len(),
+            "total_skipped_size": skipped.iter().map(|f| f.size).sum::<u64>(),
+            "files": cleanable.iter().map(|f| serde_json::json!({
+                "path": f.path,
+                "size": f.size,
+                "decision": format!("{:?}", f.decision),
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        return;
+    }
+    let cleanable: Vec<_> = classified
+        .iter()
+        .filter(|f| f.decision.is_cleanable(smart, force))
+        .collect();
+    let skipped: Vec<_> = classified
+        .iter()
+        .filter(|f| !f.decision.is_cleanable(smart, force))
+        .collect();
+
+    let to_clean_size: u64 = cleanable.iter().map(|f| f.size).sum();
+    let skipped_size: u64 = skipped.iter().map(|f| f.size).sum();
+
+    let mode = if force {
+        "force"
+    } else if smart {
+        "smart"
+    } else {
+        "safe"
+    };
+
+    // Time estimate
+    let estimate_secs = cleanable.len() as f64 / 500.0;
+    let time_str = if estimate_secs < 1.0 || cleanable.len() < 10 {
+        "< 1 second".to_string()
+    } else if estimate_secs < 60.0 {
+        format!("~{:.0} seconds", estimate_secs.ceil())
+    } else {
+        format!("~{:.0} minutes", (estimate_secs / 60.0).ceil())
+    };
+
+    println!();
+    println!("DRY RUN — Estimated Cleanup");
+    println!("───────────────────────────");
+    println!(
+        "  Mode: {mode} ({})",
+        if force {
+            "★★★★★ + ★★★★ + ★★★"
+        } else if smart {
+            "★★★★★ + ★★★★"
+        } else {
+            "★★★★★ only"
+        }
+    );
+    println!("  ≈ {} files", cleanable.len());
+    println!("  ≈ {} recovered", simulator::human_size(to_clean_size));
+    println!("  ≈ {}", time_str);
+
+    // Space accounting: safe vs review vs total
+    let owned_cleanable: Vec<rules::ClassifiedFile> =
+        cleanable.iter().map(|f| (*f).clone()).collect();
+    let cs = confidence::ConfidenceSummary::from_files(&owned_cleanable);
+
+    let safe_size: u64 = owned_cleanable
+        .iter()
+        .filter(|f| matches!(confidence::confidence(f), confidence::Tier::Maximum))
+        .map(|f| f.size)
+        .sum();
+    let review_size: u64 = owned_cleanable
+        .iter()
+        .filter(|f| {
+            matches!(
+                confidence::confidence(f),
+                confidence::Tier::High | confidence::Tier::Moderate
+            )
+        })
+        .map(|f| f.size)
+        .sum();
+
+    println!(
+        "  Safe (★★★★★):  {} files ({})",
+        cs.maximum,
+        simulator::human_size(safe_size)
+    );
+    println!(
+        "  Review (★★★+): {} files ({})",
+        cs.high + cs.moderate,
+        simulator::human_size(review_size)
+    );
+    println!(
+        "  Total:         {} files ({})",
+        cleanable.len(),
+        simulator::human_size(to_clean_size)
+    );
+    println!(
+        "  Would skip:    {} files ({})",
+        skipped.len(),
+        simulator::human_size(skipped_size)
+    );
+
+    // Domain breakdown (summary-first)
+    let domains = domain::summarize(&owned_cleanable);
+    if !domains.is_empty() {
+        println!("\n  WOULD CLEAN BY DOMAIN\n");
+        for d in domains.iter().take(10) {
+            let tier = if d.dominant_decision == "SAFE" {
+                confidence::Tier::Maximum
+            } else if d.dominant_decision == "BLOCKED" {
+                confidence::Tier::Protected
+            } else if d.dominant_decision == "LOWRISK" || d.dominant_decision == "MIXED" {
+                confidence::Tier::High
+            } else if d.risk_score < 0.15 {
+                confidence::Tier::Maximum
+            } else if d.risk_score < 0.35 {
+                confidence::Tier::High
+            } else {
+                confidence::Tier::Moderate
+            };
+            println!(
+                "  {} {:<35} {:>5} files  {}",
+                tier.stars(),
+                d.domain,
+                d.file_count as i64,
+                simulator::human_size(d.total_size)
+            );
+        }
+        if domains.len() > 10 {
+            println!("  ... and {} more domains", domains.len() - 10);
+        }
+    }
+
+    // Top contributors (v6.2.1)
+    let top = pipeline::top_contributors(&owned_cleanable, 8);
+    if !top.is_empty() {
+        println!("\n  TOP CONTRIBUTORS\n");
+        for (name, count, size) in &top {
+            println!(
+                "  {:<40} {:>4} files  {}",
+                name,
+                count,
+                simulator::human_size(*size)
+            );
+        }
+    }
+
+    // File list only with --verbose
+    if verbose && !cleanable.is_empty() {
+        println!("\n  FILES\n");
+        for f in cleanable.iter().take(50) {
+            let tier = confidence::confidence(f);
+            println!(
+                "  {} {}  {}",
+                tier.stars(),
+                simulator::human_size(f.size),
+                f.path
+            );
+        }
+        if cleanable.len() > 50 {
+            println!("  ... and {} more files", cleanable.len() - 50);
+        }
+    } else if !cleanable.is_empty() && !verbose {
+        println!("\n  (use --verbose for file list)");
+    }
 }
 
 /// Display categorized error summary + first 5 details.

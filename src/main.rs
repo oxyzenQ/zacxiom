@@ -14,6 +14,7 @@ mod cli;
 mod color;
 mod commands;
 mod confidence;
+mod config;
 mod decision;
 mod dependency;
 mod discovery;
@@ -24,9 +25,11 @@ mod engine;
 mod environment;
 mod errors;
 mod evidence;
+mod exclude;
 mod execution_order;
 mod explain;
 mod history;
+mod ignorefile;
 mod impact;
 mod inspect;
 mod memory;
@@ -91,6 +94,34 @@ fn main() {
         return;
     }
 
+    // v13: --testconf validates the config file and exits.
+    if cli.testconf {
+        run_testconf();
+        return;
+    }
+
+    // v13: Load config ONCE. Hard error on malformed config (user explicitly wrote it).
+    // This prevents typos from silently weakening safety.
+    let cfg = match config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("\u{2501}\u{2501}\u{2501} CONFIG ERROR \u{2501}\u{2501}\u{2501}");
+            eprintln!(
+                "  Your config file at {} is invalid:",
+                config::config_path().display()
+            );
+            eprintln!();
+            eprintln!("  {e}");
+            eprintln!();
+            eprintln!("  Fix the issue above, then run `zacxiom --testconf` to verify.");
+            eprintln!(
+                "  Or remove the config to use safe defaults: rm {}",
+                config::config_path().display()
+            );
+            std::process::exit(2);
+        }
+    };
+
     let command = cli.command.unwrap_or_else(|| {
         eprintln!("No command specified. Use --help for usage.");
         std::process::exit(1);
@@ -104,10 +135,13 @@ fn main() {
             min_size,
             profile,
             json,
+            exclude,
         } => {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
-            commands::run_scan(all_paths, depth, min_size, json, false, &profile)
+            commands::run_scan(
+                all_paths, depth, min_size, json, false, &profile, &cfg, &exclude,
+            )
         }
 
         Command::Report {
@@ -116,10 +150,11 @@ fn main() {
             depth,
             profile,
             json,
+            exclude,
         } => {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
-            commands::run_scan(all_paths, depth, 1, json, true, &profile)
+            commands::run_scan(all_paths, depth, 1, json, true, &profile, &cfg, &exclude)
         }
 
         Command::Simulate {
@@ -129,10 +164,11 @@ fn main() {
             profile,
             json,
             verbose,
+            exclude,
         } => {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
-            commands::run_simulate(all_paths, depth, json, verbose, &profile)
+            commands::run_simulate(all_paths, depth, json, verbose, &profile, &cfg, &exclude)
         }
 
         Command::Clean {
@@ -145,11 +181,14 @@ fn main() {
             dry_run,
             verbose,
             json,
+            exclude,
+            yes,
         } => {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
             commands::run_clean(
-                all_paths, depth, smart, force, dry_run, verbose, json, &profile,
+                all_paths, depth, smart, force, dry_run, verbose, json, &profile, &cfg, &exclude,
+                yes,
             )
         }
 
@@ -158,7 +197,7 @@ fn main() {
                 eprintln!("Usage: zacxiom explain <path>");
                 std::process::exit(1);
             }
-            commands::run_explain(&path);
+            commands::run_explain(&path, &cfg);
         }
 
         Command::Undo { id, list } => commands::run_undo(id, list),
@@ -182,7 +221,7 @@ fn main() {
             depth,
             json,
             verbose,
-        } => commands::run_inspect_unknown(paths, depth, json, verbose),
+        } => commands::run_inspect_unknown(paths, depth, json, verbose, &cfg),
         Command::CheckUpdate => commands::check_update(),
         Command::ExplainConfidence { path } => commands::run_explain_confidence(path),
         Command::ExplainRisk { path } => commands::run_explain_risk(path),
@@ -214,6 +253,111 @@ fn main() {
                 }
             }
         }
+
+        Command::Config { action } => match action {
+            cli::ConfigAction::Init => commands::run_config_init(),
+            cli::ConfigAction::Show => commands::run_config_show(&cfg),
+            cli::ConfigAction::Path => commands::run_config_path(),
+            cli::ConfigAction::Testconf => run_testconf(),
+        },
+    }
+}
+
+/// Run `--testconf`: validate config, print report, exit 0 (ok) or 1 (error).
+fn run_testconf() {
+    let report = config::validate_for_testconf();
+    println!("\u{2501}\u{2501}\u{2501} ZACXIOM CONFIG CHECK \u{2501}\u{2501}\u{2501}");
+    println!("  File: {}", report.file_path.display());
+    if !report.file_exists {
+        println!("  Status: NOT FOUND (using safe defaults)");
+        println!();
+        println!("  No config file is required. Zacxiom uses safe defaults.");
+        println!("  To create one with recommended settings, run:");
+        println!("    zacxiom config init");
+        std::process::exit(0);
+    }
+    println!("  Status: FOUND");
+    println!();
+
+    if !report.warnings.is_empty() {
+        println!("\u{26a0}\u{fe0f}  WARNINGS (unknown keys \u{2014} will be ignored):",);
+        for w in &report.warnings {
+            println!("    {w}");
+        }
+        println!();
+    }
+
+    if report.is_ok() {
+        println!("\u{2714}\u{fe0f}  Config is valid.");
+        println!();
+        println!("  Effective configuration:");
+        println!("    [scan]");
+        println!(
+            "      exclude           : {} entries",
+            report.config.scan.exclude.len()
+        );
+        println!(
+            "      exclude_patterns  : {} entries",
+            report.config.scan.exclude_patterns.len()
+        );
+        println!(
+            "      min_size          : {} bytes",
+            report.config.scan.min_size
+        );
+        println!(
+            "      warn_user_dirs    : {}",
+            report.config.scan.warn_user_dirs
+        );
+        println!("    [clean]");
+        println!(
+            "      require_confirmation: {}",
+            report.config.clean.require_confirmation
+        );
+        println!(
+            "      default_mode        : {}",
+            report.config.clean.default_mode
+        );
+        println!(
+            "      protect_extensions  : {} entries",
+            report.config.clean.protect_extensions.len()
+        );
+        println!(
+            "      protect_patterns    : {} entries",
+            report.config.clean.protect_patterns.len()
+        );
+        println!(
+            "      max_auto_clean_size : {} bytes",
+            report.config.clean.max_auto_clean_size
+        );
+        println!(
+            "      first_run_dry_run   : {}",
+            report.config.clean.first_run_dry_run
+        );
+        println!("    [snapshot]");
+        println!("      dir              : {}", report.config.snapshot.dir);
+        println!(
+            "      auto_prune_days  : {}",
+            report.config.snapshot.auto_prune_days
+        );
+        println!("    [trash]");
+        println!(
+            "      verify_checksum  : {}",
+            report.config.trash.verify_checksum
+        );
+        std::process::exit(0);
+    } else {
+        println!("\u{274c}  CONFIG INVALID \u{2014} zacxiom will refuse to run until fixed.");
+        println!();
+        println!("  Errors:");
+        for e in &report.errors {
+            println!("    \u{2022} {e}");
+            println!();
+        }
+        println!("  To fix:");
+        println!("    1. Edit the file: nano {}", report.file_path.display());
+        println!("    2. Re-run this check: zacxiom --testconf");
+        println!("    3. Or reset to defaults: zacxiom config init (after deleting the file)");
+        std::process::exit(1);
     }
 }
 

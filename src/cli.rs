@@ -5,6 +5,7 @@
 //!
 //! v6.2.0: added `explain` command and `--dry-run` flag.
 //! v8.3.0: added `plan` command — cleanup recommendation engine.
+//! v13.0.0: added `--exclude`, `--yes`, `--testconf`, `config` subcommand.
 
 use clap::{Parser, Subcommand};
 
@@ -15,7 +16,8 @@ use clap::{Parser, Subcommand};
     about = "Filesystem Intelligence Engine — Observe → Understand → Decide → Act",
     long_about = "Safe-by-default filesystem cleanup with full explainability.\n\
                   Every decision is justified. Every action is logged.\n\n\
-                  Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal",
+                  Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal\n\n\
+                  v13: User-controlled safety — --exclude, config.toml, --testconf.",
     disable_version_flag = true
 )]
 pub struct Cli {
@@ -29,11 +31,16 @@ pub struct Cli {
     /// Check for latest upstream release
     #[arg(long, global = true)]
     pub check_update: bool,
+
+    /// Validate config file and exit (does not run any command)
+    #[arg(long, global = true)]
+    pub testconf: bool,
 }
 
 #[derive(Subcommand)]
 #[command(
-    after_help = "💡 Quick start: zacxiom scan → zacxiom plan → zacxiom clean\n   All destructive commands are recoverable with zacxiom undo"
+    after_help = "💡 Quick start: zacxiom scan → zacxiom plan → zacxiom clean\n   All destructive commands are recoverable with zacxiom undo\n   \
+                  v13: Use --exclude to protect specific paths/patterns"
 )]
 pub enum Command {
     /// Scan filesystem for cache files and classify them
@@ -54,6 +61,10 @@ pub enum Command {
         profile: String,
         #[arg(long)]
         json: bool,
+        /// Exclude paths/patterns from scan (e.g. --exclude "~/Downloads" --exclude "*.iso")
+        /// Can be specified multiple times. Also read from config.toml [scan].exclude.
+        #[arg(long)]
+        exclude: Vec<String>,
     },
 
     /// Plan cleanup — what is safe and recommended? (read-only, never deletes)
@@ -69,15 +80,19 @@ pub enum Command {
 
     /// Execute safe clean — removes files with trash-based recovery
     ///
-    /// Safety levels:
-    ///   clean          — SAFE files only (strict, recommended for beginners)
-    ///   clean --smart  — SAFE + LOW_RISK (more aggressive, still recoverable)
-    ///   clean --force  — SAFE + LOW + MODERATE (requires explicit YES confirmation)
+    /// Safety levels (v13: confirmation required for smart/force unless --yes):
+    ///   clean          — SAFE files only (default dry-run on first use)
+    ///   clean --smart  — SAFE + LOW_RISK (requires confirmation or --yes)
+    ///   clean --force  — SAFE + LOW + MODERATE (requires typing "DELETE" or --yes)
+    ///
+    /// v13: --force NO LONGER allows HighRisk files — those need manual `rm`.
     ///
     /// Examples:
-    ///   zacxiom clean                    # conservative
-    ///   zacxiom clean --smart            # recommended for experienced users
-    ///   zacxiom clean --force            # maximum cleanup with confirmation
+    ///   zacxiom clean                    # conservative (dry-run on first use)
+    ///   zacxiom clean --yes              # actually delete (skip dry-run + prompts)
+    ///   zacxiom clean --smart --yes      # smart mode, auto-confirm
+    ///   zacxiom clean --force --yes      # maximum cleanup, auto-confirm
+    ///   zacxiom clean --exclude "~/Downloads"  # protect Downloads
     ///   zacxiom clean --dry-run --json   # preview as JSON
     Clean {
         #[arg(short = 'P', long, num_args = 0..)]
@@ -92,7 +107,7 @@ pub enum Command {
         /// Also clean LOW_RISK files (caches, build artifacts)
         #[arg(long)]
         smart: bool,
-        /// Also clean MODERATE files (requires YES confirmation)
+        /// Also clean MODERATE files (requires confirmation unless --yes)
         #[arg(long)]
         force: bool,
         /// Preview only — show what WOULD be cleaned without deleting
@@ -103,6 +118,13 @@ pub enum Command {
         verbose: bool,
         #[arg(long)]
         json: bool,
+        /// Exclude paths/patterns from cleaning (e.g. --exclude "~/Downloads" --exclude "*.iso")
+        #[arg(long)]
+        exclude: Vec<String>,
+        /// Auto-confirm all prompts (skip dry-run, skip confirmation)
+        /// Required for non-interactive use (CI/scripts)
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Restore files from a cleanup snapshot
@@ -148,6 +170,9 @@ pub enum Command {
         json: bool,
         #[arg(long)]
         verbose: bool,
+        /// Exclude paths/patterns from simulation
+        #[arg(long)]
+        exclude: Vec<String>,
     },
 
     /// Explain why a path is safe/risky with ★★★★★ trust cards
@@ -175,6 +200,9 @@ pub enum Command {
         profile: String,
         #[arg(long)]
         json: bool,
+        /// Exclude paths/patterns from report
+        #[arg(long)]
+        exclude: Vec<String>,
     },
 
     /// Analyze unknown files — what dominates the Unknown bucket?
@@ -225,6 +253,21 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<SnapshotAction>,
     },
+
+    /// Manage user configuration (v13)
+    ///
+    /// Zacxiom reads ~/.config/zacxiom/config.toml on startup.
+    /// If the file has syntax errors or invalid values, zacxiom refuses to run.
+    ///
+    /// Usage:
+    ///   zacxiom config init      # create default config
+    ///   zacxiom config show      # print effective config
+    ///   zacxiom config path      # print config file location
+    ///   zacxiom config testconf  # validate config (same as --testconf)
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -257,4 +300,16 @@ pub enum SnapshotAction {
         #[arg(long)]
         confirm: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigAction {
+    /// Create a default config file at ~/.config/zacxiom/config.toml
+    Init,
+    /// Print the effective configuration (config file merged with defaults)
+    Show,
+    /// Print the path to the config file
+    Path,
+    /// Validate the config file (alias for --testconf)
+    Testconf,
 }

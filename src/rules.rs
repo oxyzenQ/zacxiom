@@ -89,8 +89,11 @@ impl Decision {
             Decision::Safe => true,
             Decision::LowRisk => smart || force,
             Decision::Moderate => force,
-            Decision::HighRisk => force, // v10: --force allows HighRisk after confirmation
-            Decision::Protected => false, // never
+            // v13: HighRisk is NEVER auto-cleanable, even with --force.
+            // These are config files, credentials, project source — user must `rm` manually.
+            // Previous behavior allowed --force to delete HighRisk, which caused data loss.
+            Decision::HighRisk => false,
+            Decision::Protected => false,                  // never
             Decision::ProtectedActiveEnvironment => false, // never — active env
         }
     }
@@ -137,17 +140,85 @@ pub const PROTECTED_PATHS: &[&str] = &[
     "/var/lib/pacman/",
 ];
 
+/// v13: File extensions that are NEVER cleanable — disk images + crypto keys.
+/// These are protected regardless of location (even in /tmp or cache dirs).
+/// Deleting a disk image = losing a VM or installable OS. Deleting a .pem = losing access.
+pub const PROTECTED_EXTENSIONS: &[&str] = &[
+    ".iso",
+    ".vmdk",
+    ".vdi",
+    ".vhd",
+    ".vhdx",
+    ".qcow2",
+    ".qcow",
+    ".ova",
+    ".ovf",
+    ".img",
+    ".raw",
+    ".wim",
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".keystore",
+    ".jks",
+    ".gpg",
+    ".asc",
+];
+
+/// v13: Check if a file has a protected extension (disk image, crypto key, etc.)
+pub fn has_protected_extension(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    let lower = ext.to_lowercase();
+    PROTECTED_EXTENSIONS
+        .iter()
+        .any(|p| p.trim_start_matches('.') == lower)
+}
+
+/// v13: Check if a file matches a protected glob pattern (e.g. id_rsa).
+pub fn matches_protected_pattern(path: &Path, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let path_str = path.to_string_lossy();
+    for pat in patterns {
+        if let Ok(glob) = globset::Glob::new(pat) {
+            let compiled = glob.compile_matcher();
+            if compiled.is_match(name) || compiled.is_match(path_str.as_ref()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// H2 extended: protected per-user paths (resolved at scan time for each home dir).
 pub fn user_protected_suffixes() -> &'static [&'static str] {
     &[".ssh/", ".gnupg/"]
 }
 
 /// Check if a path is protected by H2.
+/// v13: Canonicalizes the path first to prevent symlink traversal attacks
+/// (e.g. /tmp/link -> /etc/passwd would previously bypass protection).
 pub fn is_protected(path: &Path) -> bool {
-    let path_str = path.to_string_lossy();
-    PROTECTED_PATHS
+    // Try canonical form first — resolves symlinks and .. components
+    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path_str = canon.to_string_lossy();
+    if PROTECTED_PATHS
         .iter()
         .any(|prefix| path_str.starts_with(prefix))
+    {
+        return true;
+    }
+    // Also check the raw path — handles cases where canonicalize fails
+    // (broken symlink, non-existent path) but the raw path is clearly protected
+    let raw_str = path.to_string_lossy();
+    PROTECTED_PATHS
+        .iter()
+        .any(|prefix| raw_str.starts_with(prefix))
 }
 
 /// Check if a path under a home directory is protected.
@@ -177,6 +248,44 @@ mod tests {
     }
 
     #[test]
+    fn test_protected_extensions() {
+        assert!(has_protected_extension(Path::new(
+            "/home/user/Downloads/ubuntu.iso"
+        )));
+        assert!(has_protected_extension(Path::new("/tmp/vm.vmdk")));
+        assert!(has_protected_extension(Path::new("/home/user/cert.pem")));
+        assert!(has_protected_extension(Path::new("/home/user/key.PEM"))); // case-insensitive
+        assert!(!has_protected_extension(Path::new("/home/user/file.txt")));
+        assert!(!has_protected_extension(Path::new("/home/user/noext")));
+    }
+
+    #[test]
+    fn test_protected_pattern_matching() {
+        let patterns = vec!["id_rsa".to_string(), "id_ed25519".to_string()];
+        assert!(matches_protected_pattern(
+            Path::new("/home/user/.ssh/id_rsa"),
+            &patterns
+        ));
+        assert!(matches_protected_pattern(
+            Path::new("/home/user/.ssh/id_ed25519"),
+            &patterns
+        ));
+        assert!(!matches_protected_pattern(
+            Path::new("/home/user/.ssh/config"),
+            &patterns
+        ));
+    }
+
+    #[test]
+    fn test_high_risk_never_cleanable_v13() {
+        // v13: HighRisk must NEVER be cleanable, even with --force
+        assert!(!Decision::HighRisk.is_cleanable(false, false));
+        assert!(!Decision::HighRisk.is_cleanable(true, false));
+        assert!(!Decision::HighRisk.is_cleanable(false, true));
+        assert!(!Decision::HighRisk.is_cleanable(true, true));
+    }
+
+    #[test]
     fn test_user_protected() {
         let home = Path::new("/home/user");
         assert!(is_user_protected(home, Path::new("/home/user/.ssh/id_rsa")));
@@ -203,11 +312,10 @@ mod tests {
 
     #[test]
     fn test_high_risk_requires_force() {
-        // HighRisk must NOT be cleanable without --force
+        // v13: HighRisk is NEVER cleanable (was: cleanable with --force)
         assert!(!Decision::HighRisk.is_cleanable(false, false));
         assert!(!Decision::HighRisk.is_cleanable(true, false));
-        // HighRisk IS cleanable with --force (after explicit confirmation)
-        assert!(Decision::HighRisk.is_cleanable(false, true));
-        assert!(Decision::HighRisk.is_cleanable(true, true));
+        assert!(!Decision::HighRisk.is_cleanable(false, true)); // changed: was true
+        assert!(!Decision::HighRisk.is_cleanable(true, true)); // changed: was true
     }
 }

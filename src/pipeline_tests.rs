@@ -51,6 +51,15 @@ fn classify_via_pipeline(path: &str) -> (Decision, confidence::Tier, String) {
         }
     }
 
+    // Step 4b: v13 Extension protection — disk images, crypto keys, etc.
+    // Must match pipeline::classify() behavior: override ANY decision to Protected.
+    let path_obj = std::path::Path::new(path);
+    if crate::rules::has_protected_extension(path_obj) {
+        decision = Decision::Protected;
+        risk_reasons
+            .push("Protected file extension (disk image / crypto key) — never cleanable".into());
+    }
+
     // Step 5: Build ClassifiedFile
     let cf = ClassifiedFile {
         path: path.to_string(),
@@ -269,14 +278,23 @@ fn test_build_target_still_cleanable_in_safe_mode() {
 
 #[test]
 fn test_downloads_not_cleanable_in_safe_mode() {
-    // ~/Downloads should be UserDocument → Moderate → requires --force
-    let (decision, _tier, engine_cat) = classify_via_pipeline("/home/user/Downloads/installer.iso");
+    // v13: ~/Downloads/installer.iso is now PROTECTED (disk image extension)
+    // Previously: UserDocument → Moderate → cleanable with --force (caused data loss!)
+    // Now: Protected extension override → NEVER cleanable, even with --force.
+    let (decision, _tier, _engine_cat) =
+        classify_via_pipeline("/home/user/Downloads/installer.iso");
 
-    assert_eq!(engine_cat, "User Document");
-    assert_eq!(decision, Decision::Moderate);
+    // ISO files must be Protected — never cleanable under any flag
+    assert_eq!(
+        decision,
+        Decision::Protected,
+        "ISO files must be Protected (v13 safety policy), got {:?}",
+        decision
+    );
     assert!(!decision.is_cleanable(false, false)); // NOT cleanable in safe mode
-    assert!(!decision.is_cleanable(true, false)); // NOT cleanable with --smart either
-    assert!(decision.is_cleanable(false, true)); // only with --force
+    assert!(!decision.is_cleanable(true, false)); // NOT cleanable with --smart
+    assert!(!decision.is_cleanable(false, true)); // NOT cleanable with --force
+    assert!(!decision.is_cleanable(true, true)); // NOT cleanable with --smart + --force
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -326,6 +344,12 @@ fn trace_pipeline(path: &str) -> PipelineTrace {
             || engine_category.contains("Downloaded"))
     {
         final_decision = Decision::LowRisk;
+    }
+
+    // Step 5b: v13 Extension protection
+    let path_obj = std::path::Path::new(path);
+    if crate::rules::has_protected_extension(path_obj) {
+        final_decision = Decision::Protected;
     }
 
     // Step 6: Confidence tier

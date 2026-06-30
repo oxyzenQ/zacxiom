@@ -1,11 +1,11 @@
 zacxiom <VERSION> system check
 ━━━━━━━━━━━━━━━━━━━━━━━━
   ✓  Rust runtime
-  ✓  Config directory
+  ⚠  Config directory — run 'zacxiom scan' to initialize (non-blocking)
   ✓  Cache directory writable
   ✓  Trash directory writable
-  ✓  Snapshots present
   ✓  Common cache paths accessible
   ✓  Binary accessible
 ━━━━━━━━━━━━━━━━━━━━━━━━
-  7 passed. System ready.
+  5 passed, 1 warnings (non-blocking)
+  ✓  System ready.

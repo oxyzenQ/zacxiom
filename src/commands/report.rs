@@ -4,6 +4,7 @@
 //! `zacxiom report` / `zacxiom simulate` — dry-run simulation command.
 
 use crate::confidence;
+use crate::config::Config;
 use crate::display;
 use crate::domain;
 use crate::inspect;
@@ -14,15 +15,24 @@ use crate::scanner;
 use crate::simulator;
 use crate::summary;
 
-pub fn run_simulate(paths: Vec<String>, depth: usize, json: bool, verbose: bool, profile: &str) {
+pub fn run_simulate(
+    paths: Vec<String>,
+    depth: usize,
+    json: bool,
+    verbose: bool,
+    profile: &str,
+    cfg: &Config,
+    cli_exclude: &[String],
+) {
     let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
     let roots = pipeline::resolve_roots(paths);
-    let entries = scanner::scan(&roots, depth, 1, true);
+    let exclude = pipeline::build_exclude_filter(cfg, cli_exclude);
+    let entries = scanner::scan(&roots, depth, 1, true, &exclude);
     prog.advance();
     let threads = pipeline::optimal_threads(entries.len());
     prog.set_threads(threads);
-    let classified = pipeline::classify(entries, &ctx, threads);
+    let classified = pipeline::classify(entries, &ctx, threads, cfg);
     prog.advance();
     prog.advance();
     prog.done();
