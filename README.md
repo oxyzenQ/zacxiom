@@ -154,6 +154,45 @@ cd zacxiom
 ./scripts/build.sh check-all
 ```
 
+## v14.3.0 — Enterprise Readiness
+
+### Config Presets
+- `--preset dev|server|minimal` — switch between safety profiles instantly
+- `server`: conservative (500MB threshold, 7-day snapshot retention)
+- `minimal`: ultra-safe (10MB threshold, no age-based auto-clean)
+
+### Prometheus Metrics
+- `--metrics` flag exports Prometheus text format for monitoring
+- 7 metrics: operations, files removed, bytes freed, errors, etc.
+- Compatible with node_exporter textfile collector
+
+### Audit Log Rotation
+- Auto-rotates when `audit.log` exceeds 100MB
+- Keeps last 1000 entries, archives old as `audit.log.1`
+
+## v14.2.0 — Advanced Intelligence
+
+### Age-Based Auto-Clean
+- `[clean].auto_clean_older_than_days = 90` — files older than threshold auto-cleanable
+
+### Duplicate Detection
+- `zacxiom dedup` — find duplicate files by size → SHA-256 hash
+- Read-only, shows wasted space, JSON output for scripting
+
+### Space Visualization
+- `zacxiom viz` — ASCII treemap of disk usage (like dust/ncdu, read-only)
+
+## v14.1.0 — Polish & Stability
+
+### Man Page
+- `zacxiom man` — generate groff man page via clap_mangen
+
+### Cache Compression
+- Scan cache now gzip-compressed (15MB → ~2MB, 87% reduction)
+
+### Cache Statistics
+- `--cache-stats` flag — show cache size, entries, hit rate without scanning
+
 ## v14.0.0 — Cross-Unix + Performance
 
 ### Performance Fix

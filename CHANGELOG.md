@@ -2,6 +2,67 @@
 
 All notable changes to zacxiom.
 
+## [v14.3.0] — 2026-07-01
+
+### Enterprise Readiness
+
+### Added — Config Presets
+- `--preset dev|server|minimal` global flag
+- `dev`: default (no changes)
+- `server`: conservative for production (500MB threshold, 7-day prune)
+- `minimal`: ultra-safe (10MB threshold, no age-based auto-clean)
+- config.rs: `apply_preset()` function
+
+### Added — Prometheus Metrics Export
+- `--metrics` global flag exports Prometheus text format
+- 7 metrics: clean/undo/scan operations, files_removed, bytes_freed, files_restored, errors
+- Compatible with node_exporter textfile collector
+- Usage: `zacxiom --metrics > /var/cache/node_exporter/zacxiom.prom`
+
+### Added — Audit Log Rotation
+- Auto-rotates when audit.log exceeds 100MB
+- Keeps last 1000 entries, archives old as audit.log.1
+- `rotate_audit_log()` in audit.rs
+- AuditEntryRead now derives Serialize for rotation
+
+### Verified
+- 21/21 depth audit tests PASS
+- build.sh check-all PASS (413 tests), codespell PASS, golden 3/3 PASS
+- All v14.3 features smoke-tested: presets, metrics, man page, dedup, viz, cache-stats
+
+## [v14.2.0] — 2026-07-01
+
+### Advanced Intelligence
+
+### Added — Age-Based Auto-Clean
+- New config: `[clean].auto_clean_older_than_days = 90`
+- Files older than threshold auto-marked as Safe (unless Protected)
+
+### Added — Duplicate File Detection
+- New `zacxiom dedup` command — find duplicates by size → SHA-256
+- Two-phase: size grouping → hash only for candidates (efficient)
+- Read-only — never deletes. JSON output supported.
+
+### Added — Space Visualization
+- New `zacxiom viz` command — ASCII treemap of disk usage
+- Groups by parent directory, sorted by size descending
+
+## [v14.1.0] — 2026-07-01
+
+### Polish & Stability
+
+### Added — Man Page Generation
+- New `zacxiom man` command via clap_mangen
+- Outputs groff-formatted man page to stdout
+
+### Added — Cache Compression
+- scan_cache.rs save() now gzip-compresses (flate2)
+- load() auto-detects gzip vs plain JSON (backward compat)
+- 85k-file cache: ~15MB → ~2MB (87% reduction)
+
+### Added — Cache Statistics
+- `--cache-stats` global flag shows cache info without scanning
+
 ## [v14.0.0] — 2026-07-01
 
 ### Cross-Unix Support + Performance Fixes
