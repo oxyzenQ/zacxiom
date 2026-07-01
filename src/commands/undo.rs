@@ -93,6 +93,8 @@ pub fn run_undo(id: Option<String>, list_only: bool) {
                             );
                         }
                     }
+                    // v13.3: Audit log
+                    crate::audit::AuditEntry::undo(&snap_id, n).log();
                     if skipped > 0 {
                         println!("Restored {n} files ({} skipped — never removed).", skipped);
                     } else {

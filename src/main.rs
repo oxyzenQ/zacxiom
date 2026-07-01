@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 mod advisor;
+mod audit;
 mod cache;
 mod cleaner;
 mod cli;
@@ -89,6 +90,10 @@ fn main() {
     // v13.2: Enable colorblind mode if --colorblind flag is set
     if cli.colorblind {
         color::set_colorblind(true);
+    }
+    // v13.3: Quiet mode — suppress progress output for cron/scripts
+    if cli.quiet {
+        std::env::set_var("ZACXIOM_QUIET", "1");
     }
     if cli.version {
         pipeline::print_version();

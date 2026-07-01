@@ -24,7 +24,7 @@ pub fn run_simulate(
     cfg: &Config,
     cli_exclude: &[String],
 ) {
-    let mut prog = progress::Progress::new(json);
+    let mut prog = progress::Progress::new(json || std::env::var("ZACXIOM_QUIET").is_ok());
     let ctx = RunContext::new(profile);
     let roots = pipeline::resolve_roots(paths);
     let exclude = pipeline::build_exclude_filter(cfg, cli_exclude);

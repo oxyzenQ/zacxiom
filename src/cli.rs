@@ -43,6 +43,11 @@ pub struct Cli {
     /// v13.2: Colorblind mode — use shapes (✓⚠⛔) instead of colors
     #[arg(long, global = true)]
     pub colorblind: bool,
+
+    /// v13.3: Quiet mode — suppress progress output (for cron/scripts)
+    /// Only shows final results. Use with --json for fully scriptable output.
+    #[arg(long, short = 'q', global = true)]
+    pub quiet: bool,
 }
 
 #[derive(Subcommand)]

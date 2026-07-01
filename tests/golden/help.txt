@@ -42,6 +42,9 @@ Options:
       --colorblind
           v13.2: Colorblind mode — use shapes (✓⚠⛔) instead of colors
 
+  -q, --quiet
+          v13.3: Quiet mode — suppress progress output (for cron/scripts) Only shows final results. Use with --json for fully scriptable output
+
   -h, --help
           Print help (see a summary with '-h')
 

@@ -1,0 +1,16 @@
+# zacxiom pacman post-transaction hook (v13.3)
+# Cleans caches after pacman transactions.
+# Install: sudo cp this file to /usr/share/libalpm/hooks/zacxiom-pacman.hook
+
+[Trigger]
+Operation = Upgrade
+Operation = Install
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Cleaning caches with zacxiom...
+When = PostTransaction
+Exec = /usr/local/bin/zacxiom-pacman-clean.sh
+Depends = zacxiom

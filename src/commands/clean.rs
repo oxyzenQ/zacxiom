@@ -42,7 +42,7 @@ pub fn run_clean(
     include_patterns: &[String],
     diff: bool,
 ) {
-    let mut prog = progress::Progress::new(json);
+    let mut prog = progress::Progress::new(json || std::env::var("ZACXIOM_QUIET").is_ok());
     let ctx = RunContext::new(profile);
     let roots = pipeline::resolve_roots(paths);
     let exclude = pipeline::build_exclude_filter(cfg, cli_exclude);
@@ -193,6 +193,29 @@ pub fn run_clean(
     // v12: Snapshot already populated incrementally by cleaner::clean().
     // Save the final authoritative version (incremental saves were best-effort).
     let _snap_path = snap.save().unwrap_or_default();
+
+    // v13.3: Audit log — record this clean operation for compliance/debugging
+    let mode_str = if effective_force {
+        "force"
+    } else if effective_smart {
+        "smart"
+    } else {
+        "safe"
+    };
+    crate::audit::AuditEntry::clean(
+        &snap.id,
+        report.files_removed,
+        report.bytes_freed,
+        report.files_skipped,
+        report.errors.len(),
+        mode_str,
+    )
+    .log();
+
+    // v13.3: Desktop notification (best-effort, non-blocking)
+    if report.files_removed > 0 {
+        notify_clean_complete(report.files_removed, report.bytes_freed, &snap.id);
+    }
 
     if json {
         let out = serde_json::json!({
@@ -586,4 +609,41 @@ fn print_scan_diff(classified: &[rules::ClassifiedFile], smart: bool, force: boo
     println!("  Total now:      {:>6}", classified.len());
     println!("  Cleanable now:  {cleanable_now:>6}");
     println!();
+}
+
+/// v13.3: Desktop notification via notify-send (best-effort, no Rust dep).
+/// Only fires if notify-send is available and DISPLAY is set (graphical session).
+/// Non-blocking — failures are silently ignored.
+fn notify_clean_complete(files_removed: usize, bytes_freed: u64, snapshot_id: &str) {
+    // Only notify in graphical sessions
+    if std::env::var("DISPLAY").is_err() && std::env::var("WAYLAND_DISPLAY").is_err() {
+        return;
+    }
+    // Check if notify-send exists
+    if std::process::Command::new("notify-send")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        return; // notify-send not installed — skip silently
+    }
+    let size_str = simulator::human_size(bytes_freed);
+    let body = format!(
+        "Removed {files_removed} files ({size_str})\nUndo: zacxiom undo --id {snapshot_id}"
+    );
+    // Fire and forget — don't wait for notification daemon
+    let _ = std::process::Command::new("notify-send")
+        .args([
+            "--app-name=zacxiom",
+            "--icon=edit-clear",
+            "--urgency=normal",
+            "--expire-time=5000",
+            "Clean complete",
+            &body,
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }

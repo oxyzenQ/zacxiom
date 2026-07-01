@@ -27,7 +27,7 @@ pub fn run_scan(
     use_cache: bool,
     suggest: bool,
 ) {
-    let mut prog = progress::Progress::new(json);
+    let mut prog = progress::Progress::new(json || std::env::var("ZACXIOM_QUIET").is_ok());
     let ctx = RunContext::new(profile);
     let roots = pipeline::resolve_roots(paths);
 
