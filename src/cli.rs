@@ -48,6 +48,10 @@ pub struct Cli {
     /// Only shows final results. Use with --json for fully scriptable output.
     #[arg(long, short = 'q', global = true)]
     pub quiet: bool,
+
+    /// v14.1: Show scan cache statistics (size, entries, last-updated) and exit
+    #[arg(long, global = true)]
+    pub cache_stats: bool,
 }
 
 #[derive(Subcommand)]
@@ -306,6 +310,13 @@ pub enum Command {
         /// Shell to generate completions for
         shell: clap_complete::Shell,
     },
+
+    /// Generate man page (v14.1)
+    ///
+    /// Print groff-formatted man page to stdout.
+    /// Install with: zacxiom man > /usr/local/share/man/man1/zacxiom.1
+    ///               mandb && man zacxiom
+    Man,
 }
 
 #[derive(Subcommand)]

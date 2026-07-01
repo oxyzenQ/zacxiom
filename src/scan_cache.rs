@@ -98,24 +98,40 @@ impl ScanCache {
         }
     }
 
-    /// Load cache from disk. Returns empty cache if file doesn't exist or is corrupt.
+    /// Load cache from disk (gzip-compressed).
+    /// Returns empty cache if file doesn't exist or is corrupt.
     /// v14.1: If version mismatch, start fresh (old cache incompatible).
+    /// v14.1: Cache is gzip-compressed to reduce disk footprint (85k files = 15MB → ~2MB).
     pub fn load() -> ScanCache {
         let path = cache_path();
         if !path.exists() {
             return ScanCache::new();
         }
-        let data = match fs::read_to_string(&path) {
+        // v14.1: Try gzip decompression first, fall back to plain JSON for backward compat
+        let data = match fs::read(&path) {
             Ok(d) => d,
             Err(_) => return ScanCache::new(),
         };
-        match serde_json::from_str::<ScanCache>(&data) {
+        // Try gzip decompress
+        let json_str = {
+            use std::io::Read;
+            let mut decoder = flate2::read::GzDecoder::new(&data[..]);
+            let mut decoded = String::new();
+            if decoder.read_to_string(&mut decoded).is_ok() {
+                decoded
+            } else {
+                // Not gzip — try plain JSON (old v1 cache or uncompressed)
+                String::from_utf8_lossy(&data).to_string()
+            }
+        };
+        match serde_json::from_str::<ScanCache>(&json_str) {
             Ok(c) if c.version == CACHE_VERSION => c,
-            _ => ScanCache::new(), // Wrong version or corrupt — start fresh
+            _ => ScanCache::new(),
         }
     }
 
-    /// Save cache to disk (atomic: write to temp, then rename).
+    /// Save cache to disk (gzip-compressed, atomic: write to temp, then rename).
+    /// v14.1: Compression reduces 85k-file cache from ~15MB to ~2MB.
     pub fn save(&self) {
         let path = cache_path();
         if let Some(parent) = path.parent() {
@@ -123,7 +139,19 @@ impl ScanCache {
         }
         if let Ok(json) = serde_json::to_string(self) {
             let tmp = path.with_extension("tmp");
-            if fs::write(&tmp, json).is_ok() {
+            // v14.1: gzip compress before write
+            let compressed = {
+                use flate2::write::GzEncoder;
+                use flate2::Compression;
+                use std::io::Write;
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                if encoder.write_all(json.as_bytes()).is_ok() {
+                    encoder.finish().unwrap_or_default()
+                } else {
+                    json.into_bytes() // fallback to plain
+                }
+            };
+            if fs::write(&tmp, &compressed).is_ok() {
                 let _ = fs::rename(&tmp, &path);
             }
         }

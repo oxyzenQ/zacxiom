@@ -54,6 +54,7 @@ mod workspace;
 
 use clap::Parser;
 use cli::{Cli, Command};
+use std::fs;
 use std::sync::Once;
 
 static PANIC_HOOK: Once = Once::new();
@@ -131,6 +132,38 @@ fn main() {
             std::process::exit(2);
         }
     };
+
+    // v14.1: --cache-stats shows cache info and exits (before command dispatch)
+    if cli.cache_stats {
+        let cache = scan_cache::ScanCache::load();
+        let cache_file = scan_cache::cache_dir().join("scan_cache.json");
+        let file_size = fs::metadata(&cache_file).map(|m| m.len()).unwrap_or(0);
+        println!("━━━ SCAN CACHE STATISTICS ━━━");
+        println!("  File:       {}", cache_file.display());
+        println!(
+            "  Size:       {} ({} bytes)",
+            simulator::human_size(file_size),
+            file_size
+        );
+        println!("  Entries:    {}", cache.files.len());
+        println!("  Version:    {}", cache.version);
+        if cache.last_updated > 0 {
+            let age_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .saturating_sub(cache.last_updated);
+            println!("  Updated:    {}s ago", age_secs);
+        }
+        let (hits, misses, rate) = scan_cache::get_stats();
+        if hits + misses > 0 {
+            println!(
+                "  Last run:   {} hits, {} misses ({:.0}% hit rate)",
+                hits, misses, rate
+            );
+        }
+        return;
+    }
 
     let command = cli.command.unwrap_or_else(|| {
         eprintln!("No command specified. Use --help for usage.");
@@ -308,6 +341,13 @@ fn main() {
             let mut cmd = cli::Cli::command();
             let name = cmd.get_name().to_string();
             clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
+        }
+
+        Command::Man => {
+            use clap::CommandFactory;
+            let cmd = cli::Cli::command();
+            let man = clap_mangen::Man::new(cmd);
+            man.render(&mut std::io::stdout()).ok();
         }
     }
 }
