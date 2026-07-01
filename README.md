@@ -102,6 +102,27 @@ cd zacxiom
 ./scripts/build.sh check-all
 ```
 
+## v14.0.0 — Cross-Unix + Performance
+
+### Performance Fix
+- **Scan cache double-scan eliminated** — was doing a second full filesystem scan
+  to update cache. Now reuses classification results. Halves I/O on cached scans.
+
+### Cross-Unix Source Support
+- **FreeBSD/OpenBSD/macOS** — source compiles, graceful degradation for `/proc`
+- `cfg(unix)` replaces `cfg(linux)` for isatty, ioctl, statvfs
+- Process awareness disabled on non-Linux (no `/proc`), all other features work
+
+### Static musl Binary
+- `release.sh` builds two binaries: glibc (gnu) + static (musl)
+- musl = zero dynamic dependencies — works on Alpine, embedded, any Linux
+- GitHub Actions CI verifies both builds
+
+### Architecture Policy
+- **Release binaries**: amd64 Linux only (gnu + musl)
+- **Source**: compiles on FreeBSD, OpenBSD, macOS
+- **Windows**: NOT supported (different filesystem philosophy)
+
 ## v13.0.0 — What's New
 
 ### User-Controlled Safety
@@ -213,8 +234,11 @@ See [docs/RULES.md](docs/RULES.md) for the complete hardened safety specificatio
 ## Release Verification
 
 ```bash
-# Verify release integrity
-sha512sum -c zacxiom-v13.0.0-linux-amd64.tar.gz.sha512
+# Verify release integrity (gnu binary)
+sha512sum -c zacxiom-v14.0.0-linux-amd64-gnu.tar.gz.sha512sum
+
+# Verify release integrity (musl static binary)
+sha512sum -c zacxiom-v14.0.0-linux-amd64-musl.tar.gz.sha512sum
 ```
 
 ## Intellectual Property

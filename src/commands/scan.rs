@@ -75,17 +75,18 @@ pub fn run_scan(
     prog.advance();
     prog.done();
 
-    // v13.1: Update cache with current scan results (best-effort, non-blocking)
+    // v13.1: Update cache from classification results (NO second scan — use classified data)
+    // v14.0 fix: was doing a SECOND full scan to update cache — huge I/O waste.
+    // Now reuse the classified entries which already have path + size.
     if use_cache {
         let cache_updated = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        for entry in scanner::scan(&roots, depth, effective_min_size, true, &exclude) {
-            let path_str = entry.path.to_string_lossy().into_owned();
-            let mtime = scan_cache::get_mtime_secs(&entry.path).unwrap_or(0);
-            let inode = scan_cache::get_inode(&entry.path);
-            cache.insert(&path_str, entry.size, mtime, inode);
+        for f in &classified {
+            let mtime = scan_cache::get_mtime_secs(std::path::Path::new(&f.path)).unwrap_or(0);
+            let inode = scan_cache::get_inode(std::path::Path::new(&f.path));
+            cache.insert(&f.path, f.size, mtime, inode);
         }
         cache.last_updated = cache_updated;
         // Prune missing entries periodically

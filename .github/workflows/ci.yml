@@ -84,7 +84,8 @@ jobs:
       - name: Verify static linking
         run: |
           file target/x86_64-unknown-linux-musl/release/zacxiom
-          ldd target/x86_64-unknown-linux-musl/release/zacxiom || echo "Static binary (no dynamic deps)"
+          ldd target/x86_64-unknown-linux-musl/release/zacxiom \
+            || echo "Static binary (no dynamic deps)"
 
       - name: Smoke test musl binary
         run: |

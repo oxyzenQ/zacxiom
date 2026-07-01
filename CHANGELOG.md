@@ -2,6 +2,66 @@
 
 All notable changes to zacxiom.
 
+## [v14.0.0] — 2026-07-01
+
+### Cross-Unix Support + Performance Fixes
+
+### Fixed — Critical Performance Bug
+- Scan cache double-scan eliminated — was doing a SECOND full filesystem scan
+  to update cache. Now reuses classification results. Halves I/O.
+
+### Fixed — CI
+- yamllint line-length error in ci.yml musl-build job
+- release.sh ANSI color code typo
+
+### Added — Cross-Unix Source Compatibility
+- procfs.rs: /proc gated to Linux; non-Linux returns empty set (graceful)
+- pipeline.rs: /proc/loadavg gated to Linux; non-Linux skips load-aware scaling
+- color.rs, display.rs, profiles.rs: cfg(linux) → cfg(unix) for isatty/ioctl/statvfs
+- BUILD_TARGET detects freebsd/openbsd/macos
+
+### Added — Static musl Binary
+- release.sh builds gnu + musl binaries with separate tar.gz + checksums
+- musl = zero dynamic deps (Alpine, embedded, any Linux)
+
+### Added — GitHub Actions CI
+- musl-build job: builds + verifies + smoke tests static binary
+
+### Architecture Policy
+- Release binaries: amd64 Linux only (gnu + musl)
+- Source: compiles on FreeBSD/OpenBSD/macOS
+- Windows: NOT supported
+
+### Verified
+- 21/21 depth audit tests PASS
+- build.sh check-all PASS, codespell PASS, yamllint PASS, golden 3/3 PASS
+
+## [v13.3.0] — 2026-07-01
+
+### Ecosystem Integration
+- Audit log (JSONL) — ~/.local/share/zacxiom/audit.log
+- Cron-friendly --quiet flag
+- Desktop notifications via notify-send
+- Pacman post-transaction hook (opt-in)
+- Backup integration docs (restic/borg/rsync)
+
+## [v13.2.0] — 2026-07-01
+
+### Intelligence & Safety
+- Colorblind mode (--colorblind) — shapes instead of colors
+- Snapshot integrity check (zacxiom snapshot verify)
+- Learning risk model — undo flags restored paths
+- Smart suggestions (scan --suggest)
+- Dry-run diff (clean --dry-run --diff)
+
+## [v13.1.0] — 2026-07-01
+
+### Performance & Polish
+- Shell completions (bash/zsh/fish/elvish/powershell)
+- Progress ETA
+- Incremental scan cache (--no-cache to disable)
+- Parallel snapshot pruning (auto_prune_async)
+
 ## [v13.0.0] — 2026-06-30
 
 ### Masterclass Safety Overhaul — "Safe filesystem cleaning, explained."
