@@ -73,4 +73,31 @@ jobs:
           files: |
             ${{ env.archive }}
             ${{ env.archive }}.sha512sum
-          generate_release_notes: true
+          body: |
+            ## zacxiom ${{ github.ref_name }}
+
+            **Safe filesystem cleaning, explained.**
+            Clean safely. Explain every decision. Recover anything.
+
+            ### Downloads
+            - **gnu** — standard glibc binary (Ubuntu, Arch, Fedora, Debian)
+            - **musl** — static binary (Alpine, embedded, any Linux)
+
+            ### Install
+            ```bash
+            tar xzf zacxiom-*-linux-amd64-*.tar.gz
+            sudo install -Dm755 zacxiom /usr/local/bin/zacxiom
+            zacxiom --version
+            ```
+
+            ### What's new
+            See
+            [CHANGELOG.md](https://github.com/oxyzenQ/zacxiom/blob/main/CHANGELOG.md)
+
+            ### Verify
+            ```bash
+            sha512sum -c zacxiom-*.sha512sum
+            ```
+
+            ---
+            (c) 2026 rezky_nightky (oxyzenQ) - GPL-3.0-only
