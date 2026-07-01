@@ -52,6 +52,16 @@ pub struct Cli {
     /// v14.1: Show scan cache statistics (size, entries, last-updated) and exit
     #[arg(long, global = true)]
     pub cache_stats: bool,
+
+    /// v14.3: Config preset — "dev" (default), "server" (conservative), "minimal" (safe-only)
+    /// Overrides base config values with preset defaults.
+    #[arg(long, global = true)]
+    pub preset: Option<String>,
+
+    /// v14.3: Export Prometheus metrics to stdout and exit
+    /// Use with node_exporter textfile collector for monitoring.
+    #[arg(long, global = true)]
+    pub metrics: bool,
 }
 
 #[derive(Subcommand)]

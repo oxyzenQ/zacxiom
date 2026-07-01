@@ -117,13 +117,46 @@ impl AuditEntry {
 
     /// Append this entry to the audit log (JSONL format).
     /// Best-effort — errors are silently ignored (audit log must never crash zacxiom).
+    /// v14.3: Auto-rotates when log exceeds 100MB (keeps last 1000 entries).
     pub fn log(&self) {
         let path = audit_log_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
+
+        // v14.3: Auto-rotate if log file > 100MB
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.len() > 100 * 1024 * 1024 {
+                rotate_audit_log(&path);
+            }
+        }
+
         if let Ok(json) = serde_json::to_string(self) {
             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(file, "{json}");
+            }
+        }
+    }
+}
+
+/// v14.3: Rotate audit log — keep last 1000 entries, archive old as audit.log.1
+fn rotate_audit_log(path: &std::path::Path) {
+    let entries = read_recent(1000);
+    if entries.is_empty() {
+        return;
+    }
+    // Archive old log
+    let archive = path.with_extension("log.1");
+    let _ = std::fs::rename(path, &archive);
+    // Write trimmed log (last 1000 entries only)
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+    {
+        for e in &entries {
+            if let Ok(json) = serde_json::to_string(e) {
                 let _ = writeln!(file, "{json}");
             }
         }
@@ -166,8 +199,8 @@ pub fn read_recent(limit: usize) -> Vec<AuditEntryRead> {
     entries
 }
 
-/// Readable version of AuditEntry (for status display).
-#[derive(Debug, serde::Deserialize)]
+/// Readable version of AuditEntry (for status display + rotation).
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct AuditEntryRead {
     pub ts: String,
     pub event: String,

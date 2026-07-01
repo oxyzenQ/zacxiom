@@ -113,7 +113,7 @@ fn main() {
 
     // v13: Load config ONCE. Hard error on malformed config (user explicitly wrote it).
     // This prevents typos from silently weakening safety.
-    let cfg = match config::load() {
+    let mut cfg = match config::load() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("\u{2501}\u{2501}\u{2501} CONFIG ERROR \u{2501}\u{2501}\u{2501}");
@@ -132,6 +132,20 @@ fn main() {
             std::process::exit(2);
         }
     };
+
+    // v14.3: Apply config preset if --preset flag is set
+    if let Some(ref preset) = cli.preset {
+        config::apply_preset(&mut cfg, preset);
+        if !cli.quiet {
+            eprintln!("  Preset: {preset} applied");
+        }
+    }
+
+    // v14.3: --metrics exports Prometheus metrics and exits
+    if cli.metrics {
+        export_prometheus_metrics();
+        return;
+    }
 
     // v14.1: --cache-stats shows cache info and exits (before command dispatch)
     if cli.cache_stats {
@@ -477,6 +491,68 @@ fn run_testconf() {
         println!("    3. Or reset to defaults: zacxiom config init (after deleting the file)");
         std::process::exit(1);
     }
+}
+
+/// v14.3: Export Prometheus-format metrics from audit log.
+/// Outputs text format suitable for node_exporter textfile collector.
+/// Usage: zacxiom --metrics > /var/cache/node_exporter/zacxiom.prom
+fn export_prometheus_metrics() {
+    let entries = audit::read_recent(1000);
+
+    let mut total_cleans = 0u64;
+    let mut total_undos = 0u64;
+    let mut total_scans = 0u64;
+    let mut total_files_removed = 0u64;
+    let mut total_bytes_freed = 0u64;
+    let mut total_files_restored = 0u64;
+    let mut total_errors = 0u64;
+
+    for e in &entries {
+        match e.event.as_str() {
+            "clean" => {
+                total_cleans += 1;
+                total_files_removed += e.files_removed.unwrap_or(0) as u64;
+                total_bytes_freed += e.bytes_freed.unwrap_or(0);
+                total_errors += e.errors.unwrap_or(0) as u64;
+            }
+            "undo" => {
+                total_undos += 1;
+                total_files_restored += e.files_restored.unwrap_or(0) as u64;
+            }
+            "scan" => {
+                total_scans += 1;
+            }
+            _ => {}
+        }
+    }
+
+    println!("# HELP zacxiom_clean_operations_total Total clean operations");
+    println!("# TYPE zacxiom_clean_operations_total counter");
+    println!("zacxiom_clean_operations_total {total_cleans}");
+    println!();
+    println!("# HELP zacxiom_undo_operations_total Total undo operations");
+    println!("# TYPE zacxiom_undo_operations_total counter");
+    println!("zacxiom_undo_operations_total {total_undos}");
+    println!();
+    println!("# HELP zacxiom_scan_operations_total Total scan operations");
+    println!("# TYPE zacxiom_scan_operations_total counter");
+    println!("zacxiom_scan_operations_total {total_scans}");
+    println!();
+    println!("# HELP zacxiom_files_removed_total Total files removed across all cleans");
+    println!("# TYPE zacxiom_files_removed_total counter");
+    println!("zacxiom_files_removed_total {total_files_removed}");
+    println!();
+    println!("# HELP zacxiom_bytes_freed_total Total bytes freed across all cleans");
+    println!("# TYPE zacxiom_bytes_freed_total counter");
+    println!("zacxiom_bytes_freed_total {total_bytes_freed}");
+    println!();
+    println!("# HELP zacxiom_files_restored_total Total files restored via undo");
+    println!("# TYPE zacxiom_files_restored_total counter");
+    println!("zacxiom_files_restored_total {total_files_restored}");
+    println!();
+    println!("# HELP zacxiom_errors_total Total errors during clean operations");
+    println!("# TYPE zacxiom_errors_total counter");
+    println!("zacxiom_errors_total {total_errors}");
 }
 
 #[cfg(test)]

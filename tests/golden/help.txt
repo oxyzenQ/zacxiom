@@ -51,6 +51,12 @@ Options:
       --cache-stats
           v14.1: Show scan cache statistics (size, entries, last-updated) and exit
 
+      --preset <PRESET>
+          v14.3: Config preset — "dev" (default), "server" (conservative), "minimal" (safe-only) Overrides base config values with preset defaults
+
+      --metrics
+          v14.3: Export Prometheus metrics to stdout and exit Use with node_exporter textfile collector for monitoring
+
   -h, --help
           Print help (see a summary with '-h')
 

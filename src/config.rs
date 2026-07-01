@@ -404,6 +404,38 @@ pub fn load() -> Result<Config, String> {
     parse_and_validate(&contents)
 }
 
+/// v14.3: Apply a named preset to the config.
+/// Presets override base config values with conservative defaults.
+/// Built-in presets: "dev" (no-op), "server" (conservative), "minimal" (ultra-safe).
+pub fn apply_preset(cfg: &mut Config, preset: &str) {
+    match preset {
+        "dev" => {
+            // Default — no changes
+        }
+        "server" => {
+            // Conservative for production servers
+            cfg.clean.require_confirmation = true;
+            cfg.clean.default_mode = "safe".into();
+            cfg.clean.first_run_dry_run = true;
+            cfg.clean.max_auto_clean_size = 500 * 1024 * 1024; // 500MB
+            cfg.snapshot.auto_prune_days = 7; // Shorter retention
+            cfg.scan.max_threads = 0; // Auto (load-aware)
+        }
+        "minimal" => {
+            // Ultra-safe — safe mode only, tiny threshold
+            cfg.clean.require_confirmation = true;
+            cfg.clean.default_mode = "safe".into();
+            cfg.clean.first_run_dry_run = true;
+            cfg.clean.max_auto_clean_size = 10 * 1024 * 1024; // 10MB
+            cfg.clean.auto_clean_older_than_days = 0; // No age-based auto-clean
+            cfg.snapshot.auto_prune_days = 14;
+        }
+        _ => {
+            // Unknown preset — ignore silently (user may have custom preset name)
+        }
+    }
+}
+
 /// Parse and validate config contents. Public so --testconf can reuse it.
 pub fn parse_and_validate(contents: &str) -> Result<Config, String> {
     // Step 1: Parse TOML — catches syntax errors
@@ -545,6 +577,7 @@ fn detect_unknown_keys(toml_doc: &toml::Value) -> Result<(), String> {
                 "protect_patterns",
                 "max_auto_clean_size",
                 "first_run_dry_run",
+                "auto_clean_older_than_days",
             ],
         ),
         ("rules_exclude", &["exclude"]),
@@ -652,6 +685,7 @@ pub fn validate_for_testconf() -> TestconfReport {
                 "protect_patterns",
                 "max_auto_clean_size",
                 "first_run_dry_run",
+                "auto_clean_older_than_days",
             ],
         ),
         ("rules_exclude", &["exclude"]),
