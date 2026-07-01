@@ -54,8 +54,8 @@ fn detect_color() -> bool {
             return true;
         }
     }
-    // Check if stdout is a terminal
-    #[cfg(target_os = "linux")]
+    // Check if stdout is a terminal (Unix-wide, not just Linux)
+    #[cfg(unix)]
     {
         let fd = libc::STDOUT_FILENO;
         if unsafe { libc::isatty(fd) } == 0 {

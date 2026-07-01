@@ -81,7 +81,7 @@ pub fn detect_health() -> HealthMode {
 
 fn detect_health_at(mount: &str) -> HealthMode {
     // Use statvfs via a simple df-like check
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
         if let Some(stat) = nix_statvfs(mount) {
             let total = stat.total_blocks * stat.block_size;
@@ -101,14 +101,14 @@ fn detect_health_at(mount: &str) -> HealthMode {
     HealthMode::Normal
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 struct Statvfs {
     total_blocks: u64,
     available_blocks: u64,
     block_size: u64,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn nix_statvfs(path: &str) -> Option<Statvfs> {
     use std::mem;
     let path = std::ffi::CString::new(path).ok()?;

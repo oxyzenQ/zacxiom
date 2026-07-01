@@ -54,6 +54,43 @@ jobs:
       - name: Test
         run: cargo test -- --test-threads=1
 
+  musl-build:
+    name: Static musl binary (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain + musl target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: musl-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: musl-cargo-
+
+      - name: Build static musl binary
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Verify static linking
+        run: |
+          file target/x86_64-unknown-linux-musl/release/zacxiom
+          ldd target/x86_64-unknown-linux-musl/release/zacxiom || echo "Static binary (no dynamic deps)"
+
+      - name: Smoke test musl binary
+        run: |
+          ./target/x86_64-unknown-linux-musl/release/zacxiom --version
+          ./target/x86_64-unknown-linux-musl/release/zacxiom --help | head -5
+
   workflow_quality:
     name: Workflow lint + codespell
     runs-on: ubuntu-latest

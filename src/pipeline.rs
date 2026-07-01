@@ -31,9 +31,24 @@ pub const BUILD_TARGET: &str = {
     {
         "linux-aarch64"
     }
+    #[cfg(target_os = "freebsd")]
+    {
+        "freebsd"
+    }
+    #[cfg(target_os = "openbsd")]
+    {
+        "openbsd"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macos"
+    }
     #[cfg(not(any(
         all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64")
+        all(target_os = "linux", target_arch = "aarch64"),
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "macos"
     )))]
     {
         "unknown"
@@ -142,24 +157,29 @@ pub fn optimal_threads_with_config(file_count: usize, max_threads: usize) -> usi
 }
 
 /// v13: Read /proc/loadavg and reduce thread count if system is under load.
+/// v14.0: Cross-Unix — on non-Linux, returns threads unchanged (no /proc).
 /// If 1-min load average > 70% of CPU count, halve the threads.
 /// This prevents zacxiom from being a "CPU monster" on busy systems.
 fn apply_load_aware_scaling(threads: usize, cpus: usize) -> usize {
     if threads <= 2 {
         return threads; // already minimal
     }
-    if let Ok(loadavg_str) = std::fs::read_to_string("/proc/loadavg") {
-        // Format: "0.52 0.48 0.45 1/234 5678"
-        if let Some(first) = loadavg_str.split_whitespace().next() {
-            if let Ok(load1) = first.parse::<f64>() {
-                let threshold = cpus as f64 * 0.7;
-                if load1 > threshold {
-                    // System is busy — halve our threads
-                    return (threads / 2).max(2);
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(loadavg_str) = std::fs::read_to_string("/proc/loadavg") {
+            // Format: "0.52 0.48 0.45 1/234 5678"
+            if let Some(first) = loadavg_str.split_whitespace().next() {
+                if let Ok(load1) = first.parse::<f64>() {
+                    let threshold = cpus as f64 * 0.7;
+                    if load1 > threshold {
+                        // System is busy — halve our threads
+                        return (threads / 2).max(2);
+                    }
                 }
             }
         }
     }
+    // Non-Linux or /proc unavailable — return threads unchanged
     threads
 }
 

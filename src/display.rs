@@ -22,7 +22,7 @@ fn term_width() -> usize {
 }
 
 fn detect_width() -> usize {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
         if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } == 0 && ws.ws_col > 0 {
