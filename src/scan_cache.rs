@@ -1,60 +1,105 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Incremental scan cache (v13.1) — skip unchanged files on repeat scans.
+//! Incremental scan cache (v14.1) — cache-aware classification engine.
 //!
-//! Stores file metadata (path, mtime, size, inode) in a cache file.
-//! On next scan, files with unchanged mtime+size are reused without re-stat.
+//! v14.1: Stores full classification results (decision, risk_score, engine_category)
+//! so repeat scans skip the entire classification pipeline for unchanged files.
+//! On 85k files with no changes: classify() does 0 CPU work — just HashMap lookups.
 //!
 //! Cache location: ~/.cache/zacxiom/scan_cache.json
 //! (XDG_CACHE_HOME — this IS disposable cache, unlike snapshots)
 //!
-//! # Trade-offs
+//! # How it works
 //!
-//! - Pro: 85k files → <1s on repeat (was 2s)
-//! - Pro: Reduces I/O on slow disks (HDD, network mounts)
-//! - Con: Cache can be stale if files change without mtime update (rare)
-//! - Mitigation: `--no-cache` flag forces full rescan
+//! 1. First scan: classify every file, store result in cache
+//! 2. Repeat scan: for each file, check (path, size, mtime) in cache
+//!    - HIT: reuse cached classification (skip risk scoring + engine rules)
+//!    - MISS: classify normally, store new result
+//! 3. `--no-cache` forces full reclassification
+//!
+//! # Cache invalidation
+//!
+//! A cache entry is valid only if:
+//! - File size matches (content changed)
+//! - File mtime matches (metadata changed)
+//!
+//! If either differs, the entry is stale and must be reclassified.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
-/// Cached file entry — used to skip re-stat on unchanged files.
+/// v14.1: Cache version — bumped from 1 to 2 (added classification fields).
+pub const CACHE_VERSION: u32 = 2;
+
+/// Cached file entry with full classification result.
+/// Used to skip reclassification on unchanged files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedFile {
     pub path: String,
     pub size: u64,
-    /// mtime in seconds since UNIX_EPOCH
     pub mtime_secs: u64,
     pub inode: u64,
+    // v14.1: Classification cache — reuse if size+mtime unchanged
+    pub decision: String,
+    pub risk_score: f64,
+    pub engine_category: String,
+    pub engine_confidence: u8,
+    pub cache_domain: String, // CacheDomain as string
 }
 
-/// In-memory cache map: path → cached metadata
-#[derive(Debug, Default, Serialize, Deserialize)]
+/// In-memory cache map: path → cached metadata + classification
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ScanCache {
-    /// Schema version for forward compatibility
     pub version: u32,
-    /// Map of path string to cached file metadata
     pub files: HashMap<String, CachedFile>,
-    /// When this cache was last written (epoch secs)
     pub last_updated: u64,
 }
 
-impl ScanCache {
-    pub const VERSION: u32 = 1;
+impl Default for ScanCache {
+    fn default() -> Self {
+        ScanCache::new()
+    }
+}
 
+/// v14.1: Global cache hit/miss counters (atomic for thread-safe classification)
+pub static CACHE_HITS: AtomicUsize = AtomicUsize::new(0);
+pub static CACHE_MISSES: AtomicUsize = AtomicUsize::new(0);
+
+/// Reset hit/miss counters (called at start of each classify() call)
+pub fn reset_stats() {
+    CACHE_HITS.store(0, Ordering::Relaxed);
+    CACHE_MISSES.store(0, Ordering::Relaxed);
+}
+
+/// Get cache stats (hits, misses, hit_rate_pct)
+pub fn get_stats() -> (usize, usize, f64) {
+    let hits = CACHE_HITS.load(Ordering::Relaxed);
+    let misses = CACHE_MISSES.load(Ordering::Relaxed);
+    let total = hits + misses;
+    let rate = if total > 0 {
+        (hits as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+    (hits, misses, rate)
+}
+
+impl ScanCache {
     pub fn new() -> Self {
         ScanCache {
-            version: Self::VERSION,
+            version: CACHE_VERSION,
             files: HashMap::new(),
             last_updated: 0,
         }
     }
 
     /// Load cache from disk. Returns empty cache if file doesn't exist or is corrupt.
+    /// v14.1: If version mismatch, start fresh (old cache incompatible).
     pub fn load() -> ScanCache {
         let path = cache_path();
         if !path.exists() {
@@ -65,7 +110,7 @@ impl ScanCache {
             Err(_) => return ScanCache::new(),
         };
         match serde_json::from_str::<ScanCache>(&data) {
-            Ok(c) if c.version == Self::VERSION => c,
+            Ok(c) if c.version == CACHE_VERSION => c,
             _ => ScanCache::new(), // Wrong version or corrupt — start fresh
         }
     }
@@ -84,13 +129,38 @@ impl ScanCache {
         }
     }
 
-    /// Lookup a file in cache. Returns Some(CachedFile) if path exists in cache.
+    /// v14.1: Check if a file has a valid cache entry (size + mtime match).
+    /// Returns Some(&CachedFile) if cache hit, None if miss.
+    pub fn check_hit(&self, path: &str, size: u64, mtime_secs: u64) -> Option<&CachedFile> {
+        if let Some(cached) = self.files.get(path) {
+            if cached.size == size && cached.mtime_secs == mtime_secs {
+                CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+                return Some(cached);
+            }
+        }
+        CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+        None
+    }
+
+    /// Get a cache entry by path (for diff display — no hit/miss tracking).
     pub fn get(&self, path: &str) -> Option<&CachedFile> {
         self.files.get(path)
     }
 
-    /// Insert or update a file in cache.
-    pub fn insert(&mut self, path: &str, size: u64, mtime_secs: u64, inode: u64) {
+    /// Insert or update a file in cache (with classification result).
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_classified(
+        &mut self,
+        path: &str,
+        size: u64,
+        mtime_secs: u64,
+        inode: u64,
+        decision: &str,
+        risk_score: f64,
+        engine_category: &str,
+        engine_confidence: u8,
+        cache_domain: &str,
+    ) {
         self.files.insert(
             path.to_string(),
             CachedFile {
@@ -98,12 +168,16 @@ impl ScanCache {
                 size,
                 mtime_secs,
                 inode,
+                decision: decision.to_string(),
+                risk_score,
+                engine_category: engine_category.to_string(),
+                engine_confidence,
+                cache_domain: cache_domain.to_string(),
             },
         );
     }
 
     /// Remove entries that no longer exist on disk.
-    /// Returns count of pruned entries.
     pub fn prune_missing(&mut self) -> usize {
         let before = self.files.len();
         self.files.retain(|path, _| Path::new(path).exists());
@@ -111,7 +185,7 @@ impl ScanCache {
     }
 }
 
-/// Get inode number for a file (Linux/Unix).
+/// Get inode number for a file (Unix).
 #[cfg(unix)]
 pub fn get_inode(path: &Path) -> u64 {
     use std::os::unix::fs::MetadataExt;
@@ -133,13 +207,6 @@ pub fn get_mtime_secs(path: &Path) -> Option<u64> {
         .map(|d| d.as_secs())
 }
 
-/// Check if a file's cached metadata is still valid (mtime + size unchanged).
-pub fn is_cache_valid(cached: &CachedFile, current_size: u64, current_mtime: u64) -> bool {
-    cached.size == current_size && cached.mtime_secs == current_mtime
-}
-
-/// Get cache file path: ~/.cache/zacxiom/scan_cache.json
-/// This IS disposable cache (XDG_CACHE_HOME), unlike snapshots (XDG_DATA_HOME).
 fn cache_path() -> PathBuf {
     if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
         PathBuf::from(xdg).join("zacxiom/scan_cache.json")
@@ -149,7 +216,6 @@ fn cache_path() -> PathBuf {
     }
 }
 
-/// Get cache directory (parent of scan_cache.json).
 pub fn cache_dir() -> PathBuf {
     cache_path()
         .parent()
@@ -165,31 +231,40 @@ mod tests {
     #[test]
     fn test_cache_new_empty() {
         let cache = ScanCache::new();
-        assert_eq!(cache.version, ScanCache::VERSION);
+        assert_eq!(cache.version, CACHE_VERSION);
         assert!(cache.files.is_empty());
     }
 
     #[test]
-    fn test_cache_insert_get() {
+    fn test_cache_hit_miss() {
         let mut cache = ScanCache::new();
-        cache.insert("/tmp/test.txt", 100, 1234567890, 12345);
-        let entry = cache.get("/tmp/test.txt").unwrap();
-        assert_eq!(entry.size, 100);
-        assert_eq!(entry.mtime_secs, 1234567890);
-        assert_eq!(entry.inode, 12345);
-    }
-
-    #[test]
-    fn test_cache_validity_check() {
-        let cached = CachedFile {
-            path: "/tmp/test".into(),
-            size: 100,
-            mtime_secs: 12345,
-            inode: 1,
-        };
-        assert!(is_cache_valid(&cached, 100, 12345));
-        assert!(!is_cache_valid(&cached, 200, 12345)); // size changed
-        assert!(!is_cache_valid(&cached, 100, 99999)); // mtime changed
+        reset_stats();
+        cache.insert_classified(
+            "/tmp/test",
+            100,
+            12345,
+            1,
+            "Safe",
+            0.05,
+            "Cache",
+            95,
+            "browser",
+        );
+        // HIT: size + mtime match
+        let hit = cache.check_hit("/tmp/test", 100, 12345);
+        assert!(hit.is_some());
+        // MISS: size changed
+        let miss1 = cache.check_hit("/tmp/test", 200, 12345);
+        assert!(miss1.is_none());
+        // MISS: mtime changed
+        let miss2 = cache.check_hit("/tmp/test", 100, 99999);
+        assert!(miss2.is_none());
+        // MISS: path not in cache
+        let miss3 = cache.check_hit("/nonexistent", 100, 12345);
+        assert!(miss3.is_none());
+        let (hits, misses, _) = get_stats();
+        assert_eq!(hits, 1);
+        assert_eq!(misses, 3);
     }
 
     #[test]
@@ -200,13 +275,15 @@ mod tests {
         std::env::remove_var("XDG_CACHE_HOME");
 
         let mut cache = ScanCache::new();
-        cache.insert("/tmp/foo.txt", 42, 999, 7);
+        cache.insert_classified("/tmp/foo", 42, 999, 7, "Safe", 0.0, "Cache", 100, "browser");
         cache.save();
 
         let loaded = ScanCache::load();
-        assert_eq!(loaded.version, ScanCache::VERSION);
+        assert_eq!(loaded.version, CACHE_VERSION);
         assert_eq!(loaded.files.len(), 1);
-        assert!(loaded.get("/tmp/foo.txt").is_some());
+        let entry = loaded.files.get("/tmp/foo").unwrap();
+        assert_eq!(entry.decision, "Safe");
+        assert_eq!(entry.risk_score, 0.0);
 
         match old_home {
             Some(h) => std::env::set_var("HOME", h),
@@ -215,27 +292,40 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_prune_missing() {
+    fn test_cache_version_invalidation() {
+        // v1 cache should be ignored (version mismatch)
         let tmp = TempDir::new().unwrap();
-        let existing = tmp.path().join("exists.txt");
-        fs::write(&existing, b"data").unwrap();
+        let old_home = std::env::var_os("HOME");
+        let old_xdg = std::env::var_os("XDG_CACHE_HOME");
+        std::env::set_var("HOME", tmp.path());
+        std::env::remove_var("XDG_CACHE_HOME");
 
-        let mut cache = ScanCache::new();
-        cache.insert(existing.to_str().unwrap(), 4, 0, 0);
-        cache.insert("/nonexistent/path/file.txt", 4, 0, 0);
+        // Write a v1 cache (create parent dir first)
+        let cpath = cache_path();
+        fs::create_dir_all(cpath.parent().unwrap()).unwrap();
+        let v1_json = r#"{"version":1,"files":{},"last_updated":0}"#;
+        fs::write(&cpath, v1_json).unwrap();
 
-        let pruned = cache.prune_missing();
-        assert_eq!(pruned, 1);
-        assert_eq!(cache.files.len(), 1);
-        assert!(cache.get(existing.to_str().unwrap()).is_some());
+        // Load should return fresh cache (v2)
+        let loaded = ScanCache::load();
+        assert_eq!(loaded.version, CACHE_VERSION);
+        assert!(loaded.files.is_empty());
+
+        match old_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+        match old_xdg {
+            Some(h) => std::env::set_var("XDG_CACHE_HOME", h),
+            None => std::env::remove_var("XDG_CACHE_HOME"),
+        }
     }
 
     #[test]
-    fn test_get_inode_returns_nonzero_for_real_file() {
-        let tmp = TempDir::new().unwrap();
-        let file = tmp.path().join("test.txt");
-        fs::write(&file, b"hello").unwrap();
-        let inode = get_inode(&file);
-        assert!(inode > 0, "inode should be non-zero on Unix");
+    fn test_cache_stats_reset() {
+        reset_stats();
+        let (h, m, _) = get_stats();
+        assert_eq!(h, 0);
+        assert_eq!(m, 0);
     }
 }

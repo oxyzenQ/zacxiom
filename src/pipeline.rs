@@ -188,10 +188,14 @@ pub fn classify(
     ctx: &RunContext,
     threads: usize,
     cfg: &Config,
+    cache: &crate::scan_cache::ScanCache,
 ) -> Vec<rules::ClassifiedFile> {
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    // v14.1: Reset cache hit/miss counters for this classify session
+    crate::scan_cache::reset_stats();
 
     let total = entries.len();
     let counter = Arc::new(AtomicUsize::new(0));
@@ -269,9 +273,34 @@ pub fn classify(
             entries
                 .into_par_iter()
                 .map(|e| {
+                    let path_str = e.path.to_string_lossy().into_owned();
+
+                    // v14.1: Cache-aware classification — skip full pipeline if unchanged.
+                    // Check (path, size, mtime) in cache. If hit, reuse stored decision.
+                    let mtime = crate::scan_cache::get_mtime_secs(&e.path).unwrap_or(0);
+                    if let Some(cached) = cache.check_hit(&path_str, e.size, mtime) {
+                        // CACHE HIT: build ClassifiedFile from cached result, skip classification
+                        let decision = parse_decision(&cached.decision)
+                            .unwrap_or(rules::Decision::Moderate);
+                        let domain = parse_domain(&cached.cache_domain)
+                            .unwrap_or(rules::CacheDomain::Unknown);
+                        counter.fetch_add(1, Ordering::Relaxed);
+                        return rules::ClassifiedFile {
+                            path: path_str,
+                            size: e.size,
+                            cache_domain: domain,
+                            ownership: rules::Ownership::User { uid: 1000 },
+                            risk_score: cached.risk_score,
+                            risk_reasons: vec!["cached classification (unchanged)".into()],
+                            decision,
+                            engine_category: cached.engine_category.clone(),
+                            engine_confidence: cached.engine_confidence,
+                        };
+                    }
+
+                    // CACHE MISS: run full classification pipeline
                     let d = crate::cache::classify(&e.path);
                     let o = crate::ownership::detect(&e.path);
-                    let path_str = e.path.to_string_lossy().into_owned();
                     let age = crate::risk::file_age_days(&path_str);
                     let modif = ctx.memory.risk_modifier(&path_str);
                     let mut scored = crate::risk::score_v3(&crate::risk::RiskSignals {
@@ -399,9 +428,31 @@ pub fn classify(
             entries
                 .into_iter()
                 .map(|e| {
+                    let path_str = e.path.to_string_lossy().into_owned();
+
+                    // v14.1: Cache-aware classification (sequential fallback)
+                    let mtime = crate::scan_cache::get_mtime_secs(&e.path).unwrap_or(0);
+                    if let Some(cached) = cache.check_hit(&path_str, e.size, mtime) {
+                        let decision = parse_decision(&cached.decision)
+                            .unwrap_or(rules::Decision::Moderate);
+                        let domain = parse_domain(&cached.cache_domain)
+                            .unwrap_or(rules::CacheDomain::Unknown);
+                        counter.fetch_add(1, Ordering::Relaxed);
+                        return rules::ClassifiedFile {
+                            path: path_str,
+                            size: e.size,
+                            cache_domain: domain,
+                            ownership: rules::Ownership::User { uid: 1000 },
+                            risk_score: cached.risk_score,
+                            risk_reasons: vec!["cached classification (unchanged)".into()],
+                            decision,
+                            engine_category: cached.engine_category.clone(),
+                            engine_confidence: cached.engine_confidence,
+                        };
+                    }
+
                     let d = crate::cache::classify(&e.path);
                     let o = crate::ownership::detect(&e.path);
-                    let path_str = e.path.to_string_lossy().into_owned();
                     let age = crate::risk::file_age_days(&path_str);
                     let modif = ctx.memory.risk_modifier(&path_str);
                     let mut scored = crate::risk::score_v3(&crate::risk::RiskSignals {
@@ -503,6 +554,33 @@ pub fn classify(
         }
     };
     result
+}
+
+/// v14.1: Parse Decision enum from cache string (Debug format).
+fn parse_decision(s: &str) -> Option<rules::Decision> {
+    match s {
+        "Safe" => Some(rules::Decision::Safe),
+        "LowRisk" => Some(rules::Decision::LowRisk),
+        "Moderate" => Some(rules::Decision::Moderate),
+        "HighRisk" => Some(rules::Decision::HighRisk),
+        "Protected" => Some(rules::Decision::Protected),
+        "ProtectedActiveEnvironment" => Some(rules::Decision::ProtectedActiveEnvironment),
+        _ => None,
+    }
+}
+
+/// v14.1: Parse CacheDomain enum from cache string (Display format).
+fn parse_domain(s: &str) -> Option<rules::CacheDomain> {
+    match s {
+        "browser" => Some(rules::CacheDomain::Browser),
+        "system" => Some(rules::CacheDomain::System),
+        "build_artifact" => Some(rules::CacheDomain::BuildArtifact),
+        "package_manager" => Some(rules::CacheDomain::PackageManager),
+        "developer" => Some(rules::CacheDomain::Developer),
+        "user_data" => Some(rules::CacheDomain::UserData),
+        "unknown" => Some(rules::CacheDomain::Unknown),
+        _ => None,
+    }
 }
 
 pub fn chrono_now() -> String {

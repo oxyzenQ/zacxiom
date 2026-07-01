@@ -51,7 +51,13 @@ pub fn run_clean(
     prog.advance();
     let threads = pipeline::optimal_threads_with_config(entries.len(), cfg.scan.max_threads);
     prog.set_threads(threads);
-    let mut classified = pipeline::classify(entries, &ctx, threads, cfg);
+    let mut classified = pipeline::classify(
+        entries,
+        &ctx,
+        threads,
+        cfg,
+        &crate::scan_cache::ScanCache::new(),
+    );
     prog.advance();
     prog.advance();
     prog.done();

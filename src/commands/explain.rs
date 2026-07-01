@@ -63,7 +63,13 @@ pub fn run_explain(path: &str, cfg: &Config) {
         };
         let entries = vec![entry];
         let threads = 1;
-        let classified = pipeline::classify(entries, &ctx, threads, cfg);
+        let classified = pipeline::classify(
+            entries,
+            &ctx,
+            threads,
+            cfg,
+            &crate::scan_cache::ScanCache::new(),
+        );
         let mut eng = crate::engine::classify(&target);
         explain::upgrade_workspace(&mut eng);
         explain::fix_home_inheritance(&mut eng);
@@ -92,7 +98,13 @@ pub fn run_explain(path: &str, cfg: &Config) {
     let roots = vec![classify_target.clone()];
     let entries = scanner::scan(&roots, 8, 1, true, &ExcludeFilter::empty());
     let threads = pipeline::optimal_threads_with_config(entries.len(), cfg.scan.max_threads);
-    let classified = pipeline::classify(entries, &ctx, threads, cfg);
+    let classified = pipeline::classify(
+        entries,
+        &ctx,
+        threads,
+        cfg,
+        &crate::scan_cache::ScanCache::new(),
+    );
 
     let mut eng = crate::engine::classify(classify_target);
     explain::upgrade_workspace(&mut eng);

@@ -70,14 +70,14 @@ pub fn run_scan(
     prog.advance();
     let threads = pipeline::optimal_threads_with_config(entries.len(), cfg.scan.max_threads);
     prog.set_threads(threads);
-    let classified = pipeline::classify(entries, &ctx, threads, cfg);
+    let classified = pipeline::classify(entries, &ctx, threads, cfg, &cache);
     prog.advance();
     prog.advance();
     prog.done();
 
-    // v13.1: Update cache from classification results (NO second scan — use classified data)
-    // v14.0 fix: was doing a SECOND full scan to update cache — huge I/O waste.
-    // Now reuse the classified entries which already have path + size.
+    // v14.1: Update cache with full classification results for cache-aware future scans.
+    // Stores (decision, risk_score, engine_category, engine_confidence, domain) per file.
+    // Next scan with unchanged files → 100% cache hits → skip entire classification pipeline.
     if use_cache {
         let cache_updated = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -86,14 +86,35 @@ pub fn run_scan(
         for f in &classified {
             let mtime = scan_cache::get_mtime_secs(std::path::Path::new(&f.path)).unwrap_or(0);
             let inode = scan_cache::get_inode(std::path::Path::new(&f.path));
-            cache.insert(&f.path, f.size, mtime, inode);
+            cache.insert_classified(
+                &f.path,
+                f.size,
+                mtime,
+                inode,
+                &format!("{:?}", f.decision),
+                f.risk_score,
+                &f.engine_category,
+                f.engine_confidence,
+                &f.cache_domain.to_string(),
+            );
         }
         cache.last_updated = cache_updated;
         // Prune missing entries periodically
         if cache.files.len() > 10_000 {
-            cache.prune_missing();
+            let pruned = cache.prune_missing();
+            if pruned > 0 && !json {
+                eprintln!("  Cache pruned {pruned} stale entries");
+            }
         }
         cache.save();
+    }
+
+    // v14.1: Show cache stats if enabled and not JSON
+    if use_cache && !json {
+        let (hits, misses, rate) = scan_cache::get_stats();
+        if hits + misses > 0 {
+            eprintln!("  Cache: {hits} hits, {misses} misses ({rate:.0}% hit rate)");
+        }
     }
 
     if json {
