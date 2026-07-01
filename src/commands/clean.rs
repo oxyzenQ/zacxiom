@@ -40,6 +40,7 @@ pub fn run_clean(
     yes: bool,
     fail_fast: bool,
     include_patterns: &[String],
+    diff: bool,
 ) {
     let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
@@ -92,6 +93,10 @@ pub fn run_clean(
     }
 
     if effective_dry_run {
+        // v13.2: --diff flag shows what changed since last scan
+        if diff {
+            print_scan_diff(&classified, effective_smart, effective_force);
+        }
         run_dry_run(&classified, effective_smart, effective_force, json, verbose);
         return;
     }
@@ -528,4 +533,57 @@ fn report_errors(report: &cleaner::CleanReport) {
     if report.errors.len() > 5 {
         println!("    ... and {} more", report.errors.len() - 5);
     }
+}
+
+/// v13.2: Print diff — what changed since the last scan.
+/// Compares current scan results with the scan cache to show:
+/// - New files (appeared since last scan)
+/// - Modified files (size or mtime changed)
+/// - Removed files (existed in cache, gone now)
+fn print_scan_diff(classified: &[rules::ClassifiedFile], smart: bool, force: bool) {
+    use crate::scan_cache;
+    let cache = scan_cache::ScanCache::load();
+
+    let mut new_count = 0usize;
+    let mut modified_count = 0usize;
+    let mut unchanged_count = 0usize;
+
+    for f in classified {
+        match cache.get(&f.path) {
+            None => new_count += 1,
+            Some(cached) => {
+                let current_mtime =
+                    scan_cache::get_mtime_secs(std::path::Path::new(&f.path)).unwrap_or(0);
+                if cached.size != f.size || cached.mtime_secs != current_mtime {
+                    modified_count += 1;
+                } else {
+                    unchanged_count += 1;
+                }
+            }
+        }
+    }
+
+    // Count removed: files in cache but not in current scan
+    let current_paths: std::collections::HashSet<&str> =
+        classified.iter().map(|f| f.path.as_str()).collect();
+    let removed_count = cache
+        .files
+        .keys()
+        .filter(|p| !current_paths.contains(p.as_str()))
+        .count();
+
+    let cleanable_now = classified
+        .iter()
+        .filter(|f| f.decision.is_cleanable(smart, force))
+        .count();
+
+    println!("\n  ━━━ SCAN DIFF (vs last scan cache) ━━━");
+    println!("  New files:      {new_count:>6}");
+    println!("  Modified:       {modified_count:>6}");
+    println!("  Unchanged:      {unchanged_count:>6}");
+    println!("  Removed (gone): {removed_count:>6}");
+    println!("  ────────────────────────");
+    println!("  Total now:      {:>6}", classified.len());
+    println!("  Cleanable now:  {cleanable_now:>6}");
+    println!();
 }

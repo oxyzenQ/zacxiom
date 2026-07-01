@@ -358,6 +358,53 @@ pub fn auto_prune_async(max_age_days: u32) {
     });
 }
 
+/// v13.2: Verify snapshot integrity — check JSON parseability + entry consistency.
+/// Returns (total, valid, corrupted) counts.
+pub fn verify_all_snapshots() -> (usize, usize, usize) {
+    let all = Snapshot::list_all();
+    let total = all.len();
+    let mut valid = 0;
+    let mut corrupted = 0;
+
+    for id in &all {
+        let path = snapshot_dir().join(id);
+        let legacy_path = snapshot_dir_legacy().join(id);
+        let path = if path.exists() {
+            path
+        } else if legacy_path.exists() {
+            legacy_path
+        } else {
+            corrupted += 1;
+            continue;
+        };
+
+        // Try to read and parse
+        let data = match fs::read_to_string(&path) {
+            Ok(d) => d,
+            Err(_) => {
+                corrupted += 1;
+                continue;
+            }
+        };
+
+        match serde_json::from_str::<Snapshot>(&data) {
+            Ok(snap) => {
+                // Check internal consistency: id field matches filename
+                if snap.id == *id && !snap.created.is_empty() {
+                    valid += 1;
+                } else {
+                    corrupted += 1;
+                }
+            }
+            Err(_) => {
+                corrupted += 1;
+            }
+        }
+    }
+
+    (total, valid, corrupted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -127,8 +127,13 @@ impl ContextMemory {
 }
 
 fn memory_path() -> PathBuf {
-    let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
-    PathBuf::from(home).join(".cache/zacxiom/memory.json")
+    // v13.2: XDG-compliant — memory is user state, not disposable cache
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        PathBuf::from(xdg).join("zacxiom/memory.json")
+    } else {
+        let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
+        PathBuf::from(home).join(".local/share/zacxiom/memory.json")
+    }
 }
 
 fn epoch_ts() -> String {

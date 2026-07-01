@@ -39,6 +39,9 @@ Options:
       --no-cache
           v13.1: Disable incremental scan cache (force full rescan)
 
+      --colorblind
+          v13.2: Colorblind mode — use shapes (✓⚠⛔) instead of colors
+
   -h, --help
           Print help (see a summary with '-h')
 

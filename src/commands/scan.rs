@@ -25,6 +25,7 @@ pub fn run_scan(
     cfg: &Config,
     cli_exclude: &[String],
     use_cache: bool,
+    suggest: bool,
 ) {
     let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
@@ -134,5 +135,69 @@ pub fn run_scan(
     } else {
         println!("\n  💡 Next: zacxiom clean --smart (includes low-risk files)");
         println!("         zacxiom plan  (see what could be cleaned)");
+    }
+
+    // v13.2: Smart suggestions — show stale directory hints (opt-in via --suggest)
+    if suggest && !json {
+        print_smart_suggestions(&roots, &classified);
+    }
+}
+
+/// v13.2: Print smart suggestions for stale directories and cleanup hints.
+/// Only shows actionable insights — never nags.
+fn print_smart_suggestions(
+    _roots: &[std::path::PathBuf],
+    classified: &[crate::rules::ClassifiedFile],
+) {
+    use std::collections::HashMap;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let thirty_days_secs: u64 = 30 * 86400;
+
+    // Group files by top-level directory under each root
+    let mut dir_stats: HashMap<String, (usize, u64, u64)> = HashMap::new(); // dir → (count, total_size, oldest_mtime)
+    for f in classified {
+        if let Some(parent) = std::path::Path::new(&f.path).parent() {
+            let dir_str = parent.to_string_lossy().to_string();
+            let entry = dir_stats.entry(dir_str).or_insert((0, 0, u64::MAX));
+            entry.0 += 1;
+            entry.1 += f.size;
+            // Track oldest mtime
+            if let Ok(meta) = std::fs::metadata(&f.path) {
+                if let Ok(mtime) = meta.modified() {
+                    if let Ok(secs) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                        if secs.as_secs() < entry.2 {
+                            entry.2 = secs.as_secs();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Find stale directories (oldest file > 30 days, > 10 files, > 1MB)
+    let mut stale: Vec<_> = dir_stats
+        .iter()
+        .filter(|(_, (count, size, oldest))| {
+            *count > 10 && *size > 1_000_000 && now.saturating_sub(*oldest) > thirty_days_secs
+        })
+        .collect();
+    stale.sort_by_key(|(_, (_, size, _))| std::cmp::Reverse(*size));
+
+    if !stale.is_empty() {
+        println!("\n  ━━━ SMART SUGGESTIONS ━━━");
+        println!("  Directories with stale files (untouched >30 days, >1MB):");
+        for (dir, (count, size, _)) in stale.iter().take(5) {
+            let size_str = crate::simulator::human_size(*size);
+            println!("    {size_str:>10}  {count:>5} files  {dir}");
+        }
+        if stale.len() > 5 {
+            println!("    ... and {} more", stale.len() - 5);
+        }
+        println!();
+        println!("  Review with: zacxiom explain <path>");
+        println!("  Clean with:  zacxiom clean --smart --yes");
     }
 }

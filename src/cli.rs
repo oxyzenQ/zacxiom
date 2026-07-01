@@ -39,6 +39,10 @@ pub struct Cli {
     /// v13.1: Disable incremental scan cache (force full rescan)
     #[arg(long, global = true)]
     pub no_cache: bool,
+
+    /// v13.2: Colorblind mode — use shapes (✓⚠⛔) instead of colors
+    #[arg(long, global = true)]
+    pub colorblind: bool,
 }
 
 #[derive(Subcommand)]
@@ -69,6 +73,10 @@ pub enum Command {
         /// Can be specified multiple times. Also read from config.toml [scan].exclude.
         #[arg(long)]
         exclude: Vec<String>,
+
+        /// v13.2: Show smart suggestions (stale directories, cleanup hints)
+        #[arg(long)]
+        suggest: bool,
     },
 
     /// Plan cleanup — what is safe and recommended? (read-only, never deletes)
@@ -132,6 +140,9 @@ pub enum Command {
         /// v13: Stop on first error instead of continuing.
         #[arg(long)]
         fail_fast: bool,
+        /// v13.2: Show diff — what changed since last scan (use with --dry-run)
+        #[arg(long)]
+        diff: bool,
         /// Auto-confirm all prompts (skip dry-run, skip confirmation)
         /// Required for non-interactive use (CI/scripts)
         #[arg(long)]
@@ -322,6 +333,8 @@ pub enum SnapshotAction {
         #[arg(long)]
         confirm: Option<String>,
     },
+    /// v13.2: Verify snapshot integrity — detect corrupted snapshots
+    Verify,
 }
 
 #[derive(Subcommand)]

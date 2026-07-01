@@ -86,6 +86,10 @@ fn main() {
     install_panic_hook();
     color::init();
     let cli = Cli::parse();
+    // v13.2: Enable colorblind mode if --colorblind flag is set
+    if cli.colorblind {
+        color::set_colorblind(true);
+    }
     if cli.version {
         pipeline::print_version();
         return;
@@ -143,11 +147,13 @@ fn main() {
             profile,
             json,
             exclude,
+            suggest,
         } => {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
             commands::run_scan(
                 all_paths, depth, min_size, json, false, &profile, &cfg, &exclude, use_cache,
+                suggest,
             )
         }
 
@@ -162,7 +168,7 @@ fn main() {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
             commands::run_scan(
-                all_paths, depth, 1, json, true, &profile, &cfg, &exclude, use_cache,
+                all_paths, depth, 1, json, true, &profile, &cfg, &exclude, use_cache, false,
             )
         }
 
@@ -193,13 +199,14 @@ fn main() {
             exclude,
             include,
             fail_fast,
+            diff,
             yes,
         } => {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
             commands::run_clean(
                 all_paths, depth, smart, force, dry_run, verbose, json, &profile, &cfg, &exclude,
-                yes, fail_fast, &include,
+                yes, fail_fast, &include, diff,
             )
         }
 
@@ -261,6 +268,25 @@ fn main() {
                 },
                 cli::SnapshotAction::Purge { confirm } => {
                     commands::run_snapshot_purge(&confirm.unwrap_or_default());
+                }
+                cli::SnapshotAction::Verify => {
+                    let (total, valid, corrupted) = snapshot::verify_all_snapshots();
+                    println!("━━━ SNAPSHOT INTEGRITY CHECK ━━━");
+                    println!("  Total:     {total}");
+                    println!("  Valid:     {valid}");
+                    println!("  Corrupted: {corrupted}");
+                    if corrupted > 0 {
+                        println!();
+                        println!("  ⚠ {corrupted} corrupted snapshot(s) detected.");
+                        println!("    Use 'zacxiom snapshot delete <id>' to remove them.");
+                        std::process::exit(1);
+                    } else if total == 0 {
+                        println!();
+                        println!("  No snapshots found. Nothing to verify.");
+                    } else {
+                        println!();
+                        println!("  ✅ All snapshots are valid.");
+                    }
                 }
             }
         }

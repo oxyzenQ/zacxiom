@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static COLOR_OK: AtomicBool = AtomicBool::new(false);
 static COLOR_INIT: AtomicBool = AtomicBool::new(false);
+static COLORBLIND_MODE: AtomicBool = AtomicBool::new(false);
 
 /// Initialize color detection. Call once at startup.
 pub fn init() {
@@ -20,6 +21,17 @@ pub fn init() {
     }
     let ok = detect_color();
     COLOR_OK.store(ok, Ordering::Relaxed);
+}
+
+/// v13.2: Enable colorblind mode — use shapes instead of colors for status indicators.
+/// Call this after init() if --colorblind flag is set.
+pub fn set_colorblind(enabled: bool) {
+    COLORBLIND_MODE.store(enabled, Ordering::Relaxed);
+}
+
+/// Check if colorblind mode is active.
+pub fn is_colorblind() -> bool {
+    COLORBLIND_MODE.load(Ordering::Relaxed)
 }
 
 fn detect_color() -> bool {
@@ -101,6 +113,34 @@ pub fn section_header(name: &str) -> String {
         b = PURPLE_B,
         sep = "─".repeat(name.len().min(60))
     )
+}
+
+/// v13.2: Status symbols for colorblind mode.
+/// Returns a shape-based indicator instead of relying on color alone.
+/// Safe (green normally) → ✓
+/// Warning/Low (yellow) → ⚠
+/// Blocked/Protected (red) → ⛔
+/// Info (purple) → ℹ
+pub fn status_symbol(level: StatusLevel) -> &'static str {
+    if is_colorblind() {
+        match level {
+            StatusLevel::Safe => "✓",
+            StatusLevel::Warning => "⚠",
+            StatusLevel::Blocked => "⛔",
+            StatusLevel::Info => "ℹ",
+        }
+    } else {
+        // In color mode, return empty string (colors carry the meaning)
+        ""
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StatusLevel {
+    Safe,
+    Warning,
+    Blocked,
+    Info,
 }
 
 #[cfg(test)]

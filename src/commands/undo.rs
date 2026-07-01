@@ -80,11 +80,27 @@ pub fn run_undo(id: Option<String>, list_only: bool) {
                     }
                 }
                 Ok(n) => {
+                    // v13.2: Learning risk model — flag restored paths so zacxiom
+                    // learns that user wanted these files back. Future scans will
+                    // raise risk for these paths, making them less likely to be
+                    // auto-cleaned again.
+                    let mut memory = crate::memory::ContextMemory::load();
+                    for entry in &snap.entries {
+                        if !entry.skipped {
+                            memory.flag_path(
+                                &entry.path,
+                                "user restored via undo — avoid auto-cleaning",
+                            );
+                        }
+                    }
                     if skipped > 0 {
                         println!("Restored {n} files ({} skipped — never removed).", skipped);
                     } else {
                         println!("Restored {n} files.");
                     }
+                    println!(
+                        "  💡 Risk model updated — these paths will be treated more cautiously."
+                    );
                 }
                 Err(e) => {
                     eprintln!("Restore error: {e}");
