@@ -35,6 +35,10 @@ pub struct Cli {
     /// Validate config file and exit (does not run any command)
     #[arg(long, global = true)]
     pub testconf: bool,
+
+    /// v13.1: Disable incremental scan cache (force full rescan)
+    #[arg(long, global = true)]
+    pub no_cache: bool,
 }
 
 #[derive(Subcommand)]
@@ -274,6 +278,17 @@ pub enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+
+    /// Generate shell completions (v13.1)
+    ///
+    /// Print completion script for the given shell to stdout.
+    /// Install with: zacxiom completions bash > /etc/bash_completion.d/zacxiom
+    ///               zacxiom completions zsh > ~/.zsh/completions/_zacxiom
+    ///               zacxiom completions fish > ~/.config/fish/completions/zacxiom.fish
+    Completions {
+        /// Shell to generate completions for
+        shell: clap_complete::Shell,
     },
 }
 

@@ -178,7 +178,9 @@ pub fn classify(
     let ctr = counter.clone();
 
     // Progress reporter thread for large datasets
+    // v13.1: Includes ETA based on scan rate
     let _reporter = if total > 500 {
+        let start = std::time::Instant::now();
         Some(std::thread::spawn(move || {
             loop {
                 let done = ctr.load(Ordering::Relaxed);
@@ -202,8 +204,25 @@ pub fn classify(
                 } else {
                     format!("{total}")
                 };
+                // v13.1: ETA calculation
+                let elapsed = start.elapsed().as_secs_f64();
+                let eta_str = if done > 0 && elapsed > 0.5 {
+                    let rate = done as f64 / elapsed;
+                    let remaining = (total - done) as f64 / rate;
+                    if remaining < 1.0 {
+                        "<1s".to_string()
+                    } else if remaining < 60.0 {
+                        format!("~{:.0}s", remaining.ceil())
+                    } else if remaining < 3600.0 {
+                        format!("~{:.0}m", (remaining / 60.0).ceil())
+                    } else {
+                        format!("~{:.1}h", remaining / 3600.0)
+                    }
+                } else {
+                    "ETA ...".to_string()
+                };
                 print!(
-                    "\r\x1b[K  {} [{:5}] {:>7} / {:<7}  [{}{}] {:>3}%",
+                    "\r\x1b[K  {} [{:5}] {:>7} / {:<7}  [{}{}] {:>3}% {}",
                     crate::color::purple_spinner('⠋'),
                     "CLASSIFY",
                     done_str,
@@ -211,6 +230,7 @@ pub fn classify(
                     "█".repeat(filled),
                     "░".repeat(bar.saturating_sub(filled)),
                     pct,
+                    eta_str,
                 );
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }

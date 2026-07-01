@@ -44,6 +44,7 @@ mod progress;
 mod risk;
 mod rules;
 mod safety;
+mod scan_cache;
 mod scanner;
 mod simulator;
 mod snapshot;
@@ -127,6 +128,12 @@ fn main() {
         std::process::exit(1);
     });
 
+    // v13.1: --no-cache flag disables incremental scan cache
+    let use_cache = !cli.no_cache;
+
+    // v13.1: Auto-prune old snapshots in background (non-blocking)
+    snapshot::auto_prune_async(cfg.snapshot.auto_prune_days);
+
     match command {
         Command::Scan {
             paths,
@@ -140,7 +147,7 @@ fn main() {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
             commands::run_scan(
-                all_paths, depth, min_size, json, false, &profile, &cfg, &exclude,
+                all_paths, depth, min_size, json, false, &profile, &cfg, &exclude, use_cache,
             )
         }
 
@@ -154,7 +161,9 @@ fn main() {
         } => {
             let mut all_paths = paths;
             all_paths.extend(positional_paths);
-            commands::run_scan(all_paths, depth, 1, json, true, &profile, &cfg, &exclude)
+            commands::run_scan(
+                all_paths, depth, 1, json, true, &profile, &cfg, &exclude, use_cache,
+            )
         }
 
         Command::Simulate {
@@ -262,6 +271,13 @@ fn main() {
             cli::ConfigAction::Path => commands::run_config_path(),
             cli::ConfigAction::Testconf => run_testconf(),
         },
+
+        Command::Completions { shell } => {
+            use clap::CommandFactory;
+            let mut cmd = cli::Cli::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
+        }
     }
 }
 

@@ -23,6 +23,7 @@ Commands:
   explain-risk        Show detailed risk reasoning for a path
   snapshot            Manage cleanup snapshots — list, delete, prune, purge
   config              Manage user configuration (v13)
+  completions         Generate shell completions (v13.1)
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -34,6 +35,9 @@ Options:
 
       --testconf
           Validate config file and exit (does not run any command)
+
+      --no-cache
+          v13.1: Disable incremental scan cache (force full rescan)
 
   -h, --help
           Print help (see a summary with '-h')

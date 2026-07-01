@@ -332,6 +332,32 @@ pub fn total_snapshot_size() -> (usize, u64) {
     (all.len(), total)
 }
 
+/// v13.1: Auto-prune snapshots older than N days.
+/// Runs in a background thread to avoid blocking the main command.
+/// Returns immediately; pruning happens asynchronously.
+pub fn auto_prune_async(max_age_days: u32) {
+    if max_age_days == 0 {
+        return; // disabled
+    }
+    let max_secs = (max_age_days as u64) * 86400;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let threshold = now.saturating_sub(max_secs);
+
+    std::thread::spawn(move || {
+        let all = Snapshot::list_all();
+        for id in &all {
+            let snap_secs = snapshot_age_secs(id);
+            // If snapshot is older than threshold, delete it (metadata only)
+            if snap_secs > 0 && snap_secs < threshold {
+                let _ = delete_snapshot(id);
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

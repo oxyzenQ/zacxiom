@@ -10,6 +10,7 @@ use crate::domain;
 use crate::inspect;
 use crate::pipeline::{self, get_open_files, RunContext};
 use crate::progress;
+use crate::scan_cache;
 use crate::scanner;
 use crate::summary;
 
@@ -23,6 +24,7 @@ pub fn run_scan(
     profile: &str,
     cfg: &Config,
     cli_exclude: &[String],
+    use_cache: bool,
 ) {
     let mut prog = progress::Progress::new(json);
     let ctx = RunContext::new(profile);
@@ -56,6 +58,13 @@ pub fn run_scan(
         cfg.scan.min_size
     };
 
+    // v13.1: Load incremental scan cache (unless --no-cache)
+    let mut cache = if use_cache {
+        scan_cache::ScanCache::load()
+    } else {
+        scan_cache::ScanCache::new()
+    };
+
     let entries = scanner::scan(&roots, depth, effective_min_size, true, &exclude);
     prog.advance();
     let threads = pipeline::optimal_threads_with_config(entries.len(), cfg.scan.max_threads);
@@ -64,6 +73,26 @@ pub fn run_scan(
     prog.advance();
     prog.advance();
     prog.done();
+
+    // v13.1: Update cache with current scan results (best-effort, non-blocking)
+    if use_cache {
+        let cache_updated = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        for entry in scanner::scan(&roots, depth, effective_min_size, true, &exclude) {
+            let path_str = entry.path.to_string_lossy().into_owned();
+            let mtime = scan_cache::get_mtime_secs(&entry.path).unwrap_or(0);
+            let inode = scan_cache::get_inode(&entry.path);
+            cache.insert(&path_str, entry.size, mtime, inode);
+        }
+        cache.last_updated = cache_updated;
+        // Prune missing entries periodically
+        if cache.files.len() > 10_000 {
+            cache.prune_missing();
+        }
+        cache.save();
+    }
 
     if json {
         let out = serde_json::json!({
