@@ -416,6 +416,27 @@ pub fn classify(
                         ));
                     }
 
+                    // v14.2: Age-based auto-clean policy.
+                    // If [clean].auto_clean_older_than_days > 0 and file is older than that,
+                    // upgrade decision to Safe (auto-cleanable) — unless it's Protected.
+                    if cfg.clean.auto_clean_older_than_days > 0 {
+                        if let Some(age_val) = age {
+                            if age_val > cfg.clean.auto_clean_older_than_days as f64
+                                && !matches!(
+                                    scored.decision,
+                                    rules::Decision::Protected
+                                        | rules::Decision::ProtectedActiveEnvironment
+                                )
+                            {
+                                scored.decision = rules::Decision::Safe;
+                                scored.risk_reasons.push(format!(
+                                    "Auto-clean: aged {:.0}d (>{}d threshold)",
+                                    age_val, cfg.clean.auto_clean_older_than_days
+                                ));
+                            }
+                        }
+                    }
+
                     counter.fetch_add(1, Ordering::Relaxed);
                     scored
                 })

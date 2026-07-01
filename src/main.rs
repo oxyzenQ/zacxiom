@@ -349,6 +349,21 @@ fn main() {
             let man = clap_mangen::Man::new(cmd);
             man.render(&mut std::io::stdout()).ok();
         }
+
+        Command::Dedup {
+            paths,
+            positional_paths,
+            min_size,
+            json,
+        } => {
+            let mut all_paths = paths;
+            all_paths.extend(positional_paths);
+            commands::run_dedup(all_paths, min_size, json);
+        }
+
+        Command::Viz { path, depth } => {
+            commands::run_viz(path, depth);
+        }
     }
 }
 

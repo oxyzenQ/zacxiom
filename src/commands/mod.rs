@@ -8,6 +8,7 @@
 pub mod check_update;
 pub mod clean;
 pub mod config;
+pub mod dedup;
 pub mod doctor;
 pub mod explain;
 pub mod explain_confidence;
@@ -19,10 +20,12 @@ pub mod scan;
 pub mod snapshot;
 pub mod status;
 pub mod undo;
+pub mod viz;
 
 pub use check_update::check_update;
 pub use clean::run_clean;
 pub use config::{run_config_init, run_config_path, run_config_show};
+pub use dedup::run_dedup;
 pub use doctor::run_doctor;
 pub use explain::run_explain;
 pub use explain_confidence::run_explain_confidence;
@@ -37,3 +40,4 @@ pub use snapshot::{
 };
 pub use status::run_status;
 pub use undo::run_undo;
+pub use viz::run_viz;

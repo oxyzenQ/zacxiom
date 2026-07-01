@@ -128,6 +128,12 @@ pub struct CleanConfig {
     /// First-time users get automatic dry-run unless they pass --yes.
     #[serde(default = "default_true")]
     pub first_run_dry_run: bool,
+
+    /// v14.2: Auto-clean files older than this age (in days).
+    /// 0 = disabled (default). Set to 90 to auto-mark files older than 90 days
+    /// as Safe during classification.
+    #[serde(default)]
+    pub auto_clean_older_than_days: u32,
 }
 
 impl Default for CleanConfig {
@@ -139,6 +145,7 @@ impl Default for CleanConfig {
             protect_patterns: default_protect_patterns(),
             max_auto_clean_size: default_max_auto_clean_size(),
             first_run_dry_run: default_true(),
+            auto_clean_older_than_days: 0,
         }
     }
 }

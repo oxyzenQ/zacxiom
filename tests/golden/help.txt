@@ -25,6 +25,8 @@ Commands:
   config              Manage user configuration (v13)
   completions         Generate shell completions (v13.1)
   man                 Generate man page (v14.1)
+  dedup               Find duplicate files by content hash (v14.2)
+  viz                 Visualize disk usage as ASCII treemap (v14.2)
   help                Print this message or the help of the given subcommand(s)
 
 Options:

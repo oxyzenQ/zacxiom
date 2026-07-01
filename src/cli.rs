@@ -317,6 +317,36 @@ pub enum Command {
     /// Install with: zacxiom man > /usr/local/share/man/man1/zacxiom.1
     ///               mandb && man zacxiom
     Man,
+
+    /// Find duplicate files by content hash (v14.2)
+    ///
+    /// Scans for duplicate files using size → SHA-256 comparison.
+    /// Read-only — never deletes. Use with `zacxiom clean` to act on results.
+    Dedup {
+        /// Paths to scan for duplicates
+        #[arg(short = 'P', long, num_args = 0..)]
+        paths: Vec<String>,
+        /// Positional paths
+        #[arg(num_args = 0..)]
+        positional_paths: Vec<String>,
+        /// Minimum file size to consider (skip tiny files)
+        #[arg(long, default_value = "1024")]
+        min_size: u64,
+        /// JSON output
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Visualize disk usage as ASCII treemap (v14.2)
+    ///
+    /// Shows a tree of directories sorted by size — like dust/ncdu but read-only.
+    Viz {
+        /// Path to visualize
+        path: Option<String>,
+        /// Maximum depth to show
+        #[arg(short, long, default_value = "3")]
+        depth: usize,
+    },
 }
 
 #[derive(Subcommand)]
