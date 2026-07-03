@@ -73,4 +73,3 @@ jobs:
           files: |
             ${{ env.archive }}
             ${{ env.archive }}.sha512sum
-          generate_release_notes: true
