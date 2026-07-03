@@ -332,20 +332,21 @@ sha512sum -c zacxiom-v14.0.0-linux-amd64-gnu.tar.gz.sha512sum
 sha512sum -c zacxiom-v14.0.0-linux-amd64-musl.tar.gz.sha512sum
 ```
 
-## Intellectual Property
+## Intellectual Property & Trademark
 
-**zacxiom** is created and maintained by **rezky_nightky (oxyzenQ)**.
+**zacxiom** is the exclusive intellectual property of
+**rezky_nightky (oxyzenQ)**.
 
-The name, logo, and brand identity are protected trademarks.
-Forks and derivatives must use distinct branding per the GPL-3.0 license terms.
-See [TRADEMARK.md](TRADEMARK.md) for full terms.
+- Source code: licensed under **GPL-3.0-only** (see [LICENSE](LICENSE)).
+- Name, logo, and branding ("the Marks"): governed by
+  [TRADEMARK.md](TRADEMARK.md). The Marks are NOT covered by the GPL and
+  are reserved by the owner.
+- This project is **NOT for sale**. Unauthorized rebranding, relicensing,
+  or source-code theft is strictly prohibited.
 
-## License
-
-Source code: **GPL-3.0-only** — see [LICENSE](LICENSE)
+For trademark licensing or written permission, contact
+**rezky_nightky (oxyzenQ)** — https://github.com/oxyzenQ.
 
 ---
 
-<p align="center">
-  <sub>© 2026 rezky_nightky (oxyzenQ). Built with Rust. Designed for Linux.</sub>
-</p>
+© 2026 rezky_nightky (oxyzenQ). All rights reserved.
