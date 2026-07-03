@@ -86,7 +86,7 @@ jobs:
             ### Install
             ```bash
             tar xzf zacxiom-*-linux-amd64-*.tar.gz
-            sudo install -Dm755 zacxiom /usr/local/bin/zacxiom
+            sudo install -Dm755 zacxiom /usr/bin/zacxiom
             zacxiom --version
             ```
 

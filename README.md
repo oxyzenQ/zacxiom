@@ -84,7 +84,7 @@ No single competitor offers this combination:
 ```bash
 # Install
 ./scripts/install.sh            # user install → ~/.local/bin (also copies example config)
-./scripts/install.sh --system   # system install → /usr/local/bin (needs sudo)
+./scripts/install.sh --system   # system install → /usr/bin (needs sudo)
 
 # Uninstall
 ./scripts/uninstall.sh          # user uninstall

@@ -25,7 +25,7 @@ pub(crate) fn get_open_files() -> &'static HashSet<PathBuf> {
 pub const BUILD_TARGET: &str = {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        "linux-x86_64"
+        "linux-amd64"
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     {

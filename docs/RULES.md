@@ -165,7 +165,7 @@ cargo audit                  # Dependency vulnerabilities (when available)
 > ```
 > zacxiom -V/--version
 > Version: vX.Y.Z
-> Build: linux-x86_64 (git-hash)
+> Build: linux-amd64 (git-hash)
 > Copyright: (c) 2026 rezky_nightky (oxyzenQ)
 > License: GPL-3.0
 > Source: https://github.com/oxyzenQ/zacxiom

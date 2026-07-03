@@ -9,12 +9,12 @@
 #
 # Installation:
 #   sudo cp scripts/hooks/zacxiom-pacman.hook /usr/share/libalpm/hooks/
-#   sudo cp scripts/hooks/zacxiom-pacman-clean.sh /usr/local/bin/
-#   sudo chmod +x /usr/local/bin/zacxiom-pacman-clean.sh
+#   sudo cp scripts/hooks/zacxiom-pacman-clean.sh /usr/bin/
+#   sudo chmod +x /usr/bin/zacxiom-pacman-clean.sh
 #
 # Removal:
 #   sudo rm /usr/share/libalpm/hooks/zacxiom-pacman.hook
-#   sudo rm /usr/local/bin/zacxiom-pacman-clean.sh
+#   sudo rm /usr/bin/zacxiom-pacman-clean.sh
 #
 # The hook runs zacxiom in safe mode (--smart --yes) to clean:
 #   - /var/cache/pacman/pkg (package cache)
