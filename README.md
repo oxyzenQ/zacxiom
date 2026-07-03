@@ -154,7 +154,7 @@ cd zacxiom
 ./scripts/build.sh check-all
 ```
 
-## v14.3.0 — Enterprise Readiness
+## v14.3.1 — Enterprise Readiness
 
 ### Config Presets
 - `--preset dev|server|minimal` — switch between safety profiles instantly
