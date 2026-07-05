@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "zacxiom"
-version = "14.3.1"
+version = "14.3.2"
 dependencies = [
  "clap",
  "clap_complete",
