@@ -23,11 +23,35 @@ pub(crate) fn get_open_files() -> &'static HashSet<PathBuf> {
 }
 
 pub const BUILD_TARGET: &str = {
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "musl"))]
+    {
+        "linux-amd64-musl"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    {
+        "linux-amd64-gnu"
+    }
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        not(any(target_env = "musl", target_env = "gnu"))
+    ))]
     {
         "linux-amd64"
     }
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "musl"))]
+    {
+        "linux-aarch64-musl"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
+    {
+        "linux-aarch64-gnu"
+    }
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "aarch64",
+        not(any(target_env = "musl", target_env = "gnu"))
+    ))]
     {
         "linux-aarch64"
     }
