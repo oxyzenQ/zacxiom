@@ -74,7 +74,12 @@ jobs:
           # which doesn't support -shake256; openssl default output length also
           # varies by version. Python hashlib.shake_256 is consistent: 64 bytes
           # = 512 bits = 128 hex chars).
-          python3 -c "import hashlib; h=hashlib.shake_256(open('$ARCHIVE','rb').read()).hexdigest(64); print(f'{h}  $ARCHIVE')" > "$ARCHIVE.shake256"
+          python3 -c "
+            import hashlib
+            data = open('$ARCHIVE', 'rb').read()
+            h = hashlib.shake_256(data).hexdigest(64)
+            print(f'{h}  $ARCHIVE')
+          " > "$ARCHIVE.shake256"
           echo "archive=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Generate release body
