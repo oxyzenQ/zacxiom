@@ -70,8 +70,11 @@ jobs:
           # Checksums: SHA-512 (classical) + BLAKE2b-512 + SHAKE256 (quantum-resistant)
           sha512sum "$ARCHIVE" > "$ARCHIVE.sha512sum"
           b2sum "$ARCHIVE" > "$ARCHIVE.b2sum"
-          HASH=$(openssl dgst -shake256 "$ARCHIVE" | awk -F'= ' '{print $2}')
-          echo "${HASH}  $ARCHIVE" > "$ARCHIVE.shake256"
+          # SHAKE256 via Python (cross-platform — macOS/Windows ship LibreSSL
+          # which doesn't support -shake256; openssl default output length also
+          # varies by version. Python hashlib.shake_256 is consistent: 64 bytes
+          # = 512 bits = 128 hex chars).
+          python3 -c "import hashlib; h=hashlib.shake_256(open('$ARCHIVE','rb').read()).hexdigest(64); print(f'{h}  $ARCHIVE')" > "$ARCHIVE.shake256"
           echo "archive=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Generate release body
