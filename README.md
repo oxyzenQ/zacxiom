@@ -324,12 +324,20 @@ See [docs/RULES.md](docs/RULES.md) for the complete hardened safety specificatio
 
 ## Release Verification
 
-```bash
-# Verify release integrity (gnu binary)
-sha512sum -c zacxiom-v14.0.0-linux-amd64-gnu.tar.gz.sha512sum
+Each release ships **three** checksums: classical SHA-512 + quantum-resistant
+BLAKE2b-512 + SHAKE256. Full instructions in
+[docs/VERIFY_RELEASE.md](docs/VERIFY_RELEASE.md).
 
-# Verify release integrity (musl static binary)
-sha512sum -c zacxiom-v14.0.0-linux-amd64-musl.tar.gz.sha512sum
+```bash
+# Classical (universal)
+sha512sum -c zacxiom-vX.Y.Z-linux-amd64-gnu.tar.gz.sha512sum
+
+# Quantum-resistant — BLAKE2b (fastest, in coreutils)
+b2sum -c zacxiom-vX.Y.Z-linux-amd64-gnu.tar.gz.b2sum
+
+# Quantum-resistant — SHAKE256 (NIST PQ standard, via openssl)
+openssl dgst -shake256 zacxiom-vX.Y.Z-linux-amd64-gnu.tar.gz
+# Compare hash with: cat zacxiom-vX.Y.Z-linux-amd64-gnu.tar.gz.shake256
 ```
 
 ## Intellectual Property & Trademark
