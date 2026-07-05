@@ -27,6 +27,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -72,10 +74,39 @@ jobs:
           echo "${HASH}  $ARCHIVE" > "$ARCHIVE.shake256"
           echo "archive=$ARCHIVE" >> "$GITHUB_ENV"
 
+      - name: Generate release body
+        if: matrix.archive_suffix == 'linux-amd64-gnu'
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)
+          {
+            if [ -n "$PREV_TAG" ]; then
+              echo "## What's Changed"
+              echo ""
+              git log --no-merges --pretty=format:'- %s (%h)' "${PREV_TAG}..${GITHUB_REF_NAME}"
+              echo ""
+            else
+              echo "Initial release."
+            fi
+          } > release-body.md
+          echo "=== Release body ==="
+          cat release-body.md
+
       - name: Upload release
         uses: softprops/action-gh-release@v2
+        if: matrix.archive_suffix == 'linux-amd64-gnu'
         with:
-          generate_release_notes: true
+          body_path: release-body.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            ${{ env.archive }}
+            ${{ env.archive }}.sha512sum
+            ${{ env.archive }}.b2sum
+            ${{ env.archive }}.shake256
+
+      - name: Upload release (musl)
+        uses: softprops/action-gh-release@v2
+        if: matrix.archive_suffix == 'linux-amd64-musl'
+        with:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             ${{ env.archive }}
