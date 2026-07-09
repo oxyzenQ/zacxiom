@@ -112,27 +112,22 @@ fn whitelist_dirs() -> Vec<PathBuf> {
     dirs.iter().map(|d| canonical_for_compare(d)).collect()
 }
 
-/// Defense-in-depth: known-dangerous path prefixes that must NEVER be readable
-/// by zacxiom's own state I/O, even if a symlink somehow landed them inside
-/// the whitelist. The PRIMARY mechanism is the allowlist; this list is
-/// secondary.
+/// Defense-in-depth: known-dangerous path prefixes that must NEVER be touched
+/// by zacxiom's own state I/O, even if an XDG env var or symlink somehow
+/// landed them inside the whitelist. The PRIMARY mechanism is the allowlist;
+/// this list is secondary.
 fn is_dangerous(canonical: &Path) -> bool {
     let s = canonical.to_string_lossy();
     let home = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    // System credential stores — never readable
+    // System paths — never valid for zacxiom state, even if XDG env vars
+    // point here. Zacxiom is a user-space tool; its state must live under
+    // the user's home or proper XDG dirs, NOT in /etc, /usr, /var, etc.
     let deny_prefixes: &[&str] = &[
-        "/etc/shadow",
-        "/etc/gshadow",
-        "/etc/sudoers",
-        "/etc/sudoers.d/",
-        "/etc/ssh/",
-        "/root/.ssh/",
-        "/proc/",
-        "/sys/",
-        "/dev/",
+        "/etc/", "/usr/", "/var/", "/bin/", "/sbin/", "/lib/", "/lib64/", "/boot/", "/root/",
+        "/proc/", "/sys/", "/dev/",
     ];
 
     for prefix in deny_prefixes {
@@ -141,7 +136,7 @@ fn is_dangerous(canonical: &Path) -> bool {
         }
     }
 
-    // User SSH / GPG / KWallet — never readable
+    // User credential stores — never readable
     let user_deny_subdirs: &[&str] = &[".ssh/", ".gnupg/", ".kwallet/", ".local/share/keyrings/"];
     if !home.is_empty() {
         for sub in user_deny_subdirs {
@@ -315,6 +310,49 @@ mod tests {
     }
 
     #[test]
+    fn test_whitelist_rejects_all_system_dirs() {
+        with_test_home("/home/testuser", || {
+            // Every system path prefix must be rejected for state I/O
+            assert!(validate_state_read(Path::new("/etc/zacxiom/config.toml")).is_err());
+            assert!(validate_state_write(Path::new("/etc/zacxiom/config.toml")).is_err());
+            assert!(validate_state_read(Path::new("/usr/local/zacxiom/x")).is_err());
+            assert!(validate_state_read(Path::new("/var/lib/zacxiom/x")).is_err());
+            assert!(validate_state_read(Path::new("/bin/zacxiom")).is_err());
+            assert!(validate_state_read(Path::new("/sbin/zacxiom")).is_err());
+            assert!(validate_state_read(Path::new("/lib/zacxiom")).is_err());
+            assert!(validate_state_read(Path::new("/boot/zacxiom")).is_err());
+            assert!(validate_state_read(Path::new("/root/zacxiom")).is_err());
+        });
+    }
+
+    #[test]
+    fn test_xdg_to_system_dir_is_blocked() {
+        // Regression: XDG_CONFIG_HOME=/etc must NOT bypass pathguard
+        with_test_home("/home/testuser", || {
+            std::env::set_var("XDG_CONFIG_HOME", "/etc");
+            let p = Path::new("/etc/zacxiom/config.toml");
+            assert!(
+                validate_state_read(p).is_err(),
+                "XDG_CONFIG_HOME=/etc must be blocked by pathguard"
+            );
+            assert!(
+                validate_state_write(p).is_err(),
+                "XDG_CONFIG_HOME=/etc write must be blocked by pathguard"
+            );
+        });
+    }
+
+    #[test]
+    fn test_xdg_to_user_ssh_is_blocked() {
+        with_test_home("/home/testuser", || {
+            std::env::set_var("XDG_CONFIG_HOME", "/home/testuser/.ssh");
+            let p = Path::new("/home/testuser/.ssh/zacxiom/config.toml");
+            assert!(validate_state_read(p).is_err());
+            assert!(validate_state_write(p).is_err());
+        });
+    }
+
+    #[test]
     fn test_whitelist_rejects_arbitrary_user_file() {
         with_test_home("/home/testuser", || {
             // Random file in home — not in any whitelisted subdir
@@ -360,20 +398,33 @@ mod tests {
     #[test]
     fn test_dangerous_paths_detected() {
         with_test_home("/home/testuser", || {
+            // System paths
             assert!(is_dangerous(Path::new("/etc/shadow")));
             assert!(is_dangerous(Path::new("/etc/sudoers")));
             assert!(is_dangerous(Path::new("/etc/sudoers.d/wheel")));
-            assert!(is_dangerous(Path::new("/home/testuser/.ssh/id_rsa")));
-            assert!(is_dangerous(Path::new("/home/testuser/.gnupg/secring.gpg")));
+            assert!(is_dangerous(Path::new("/etc/zacxiom/config.toml")));
+            assert!(is_dangerous(Path::new("/usr/bin/bash")));
+            assert!(is_dangerous(Path::new("/var/log/syslog")));
+            assert!(is_dangerous(Path::new("/bin/sh")));
+            assert!(is_dangerous(Path::new("/sbin/init")));
+            assert!(is_dangerous(Path::new("/lib/libc.so.6")));
+            assert!(is_dangerous(Path::new("/boot/vmlinuz")));
+            assert!(is_dangerous(Path::new("/root/.bashrc")));
             assert!(is_dangerous(Path::new("/proc/self/status")));
             assert!(is_dangerous(Path::new("/sys/kernel")));
             assert!(is_dangerous(Path::new("/dev/null")));
-            // Not dangerous
+            // User credentials
+            assert!(is_dangerous(Path::new("/home/testuser/.ssh/id_rsa")));
+            assert!(is_dangerous(Path::new("/home/testuser/.gnupg/secring.gpg")));
+            // Not dangerous — valid state dirs
             assert!(!is_dangerous(Path::new(
                 "/home/testuser/.config/zacxiom/config.toml"
             )));
             assert!(!is_dangerous(Path::new(
                 "/home/testuser/.cache/zacxiom/scan_cache.json"
+            )));
+            assert!(!is_dangerous(Path::new(
+                "/home/testuser/.local/share/zacxiom/snapshots/snap-1"
             )));
         });
     }

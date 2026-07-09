@@ -3,8 +3,6 @@ Clean safely. Explain every decision. Recover anything.
 
 Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal
 
-v13: User-controlled safety — --exclude, config.toml, --testconf.
-
 Usage: zacxiom [OPTIONS] [COMMAND]
 
 Commands:
@@ -22,11 +20,11 @@ Commands:
   explain-confidence  Show complete confidence calculation for a path
   explain-risk        Show detailed risk reasoning for a path
   snapshot            Manage cleanup snapshots — list, delete, prune, purge
-  config              Manage user configuration (v13)
-  completions         Generate shell completions (v13.1)
-  man                 Generate man page (v14.1)
-  dedup               Find duplicate files by content hash (v14.2)
-  viz                 Visualize disk usage as ASCII treemap (v14.2)
+  config              Manage user configuration
+  completions         Generate shell completions
+  man                 Generate man page
+  dedup               Find duplicate files by content hash
+  viz                 Visualize disk usage as ASCII treemap
   help                Print this message or the help of the given subcommand(s)
 
 Options:
@@ -40,26 +38,31 @@ Options:
           Validate config file and exit (does not run any command)
 
       --no-cache
-          v13.1: Disable incremental scan cache (force full rescan)
+          Disable incremental scan cache (force full rescan)
 
       --colorblind
-          v13.2: Colorblind mode — use shapes (✓⚠⛔) instead of colors
+          Colorblind mode — use shapes (✓⚠⛔) instead of colors
 
   -q, --quiet
-          v13.3: Quiet mode — suppress progress output (for cron/scripts) Only shows final results. Use with --json for fully scriptable output
+          Quiet mode — suppress progress output (for cron/scripts)
+          
+          Only shows final results. Use with --json for fully scriptable output.
 
       --cache-stats
-          v14.1: Show scan cache statistics (size, entries, last-updated) and exit
+          Show scan cache statistics (size, entries, last-updated) and exit
 
       --preset <PRESET>
-          v14.3: Config preset — "dev" (default), "server" (conservative), "minimal" (safe-only) Overrides base config values with preset defaults
+          Config preset — "dev" (default), "server" (conservative), "minimal" (safe-only)
+          
+          Overrides base config values with preset defaults.
 
       --metrics
-          v14.3: Export Prometheus metrics to stdout and exit Use with node_exporter textfile collector for monitoring
+          Export Prometheus metrics to stdout and exit
+          
+          Use with node_exporter textfile collector for monitoring.
 
   -h, --help
           Print help (see a summary with '-h')
 
 💡 Quick start: zacxiom scan → zacxiom plan → zacxiom clean
    All destructive commands are recoverable with zacxiom undo
-   v13: Use --exclude to protect specific paths/patterns

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 rezky_nightky
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Zacxiom — Filesystem Intelligence Engine v12.0.0
+//! Zacxiom — Filesystem Intelligence Engine
 //!
 //! Observe → Understand → Decide → Act
 //! Safe by default. Explainable by design.

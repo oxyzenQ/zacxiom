@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! CLI definitions using clap derive.
-//!
-//! v6.2.0: added `explain` command and `--dry-run` flag.
-//! v8.3.0: added `plan` command — cleanup recommendation engine.
-//! v13.0.0: added `--exclude`, `--yes`, `--testconf`, `config` subcommand.
 
 use clap::{Parser, Subcommand};
 
@@ -16,8 +12,7 @@ use clap::{Parser, Subcommand};
     about = "Safe filesystem cleaning, explained.",
     long_about = "Safe filesystem cleaning, explained.\n\
                   Clean safely. Explain every decision. Recover anything.\n\n\
-                  Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal\n\n\
-                  v13: User-controlled safety — --exclude, config.toml, --testconf.",
+                  Confidence tiers: ★★★★★ Maximum  ★★★★ High  ★★★ Moderate  ★★ Low  ★ Minimal",
     disable_version_flag = true
 )]
 pub struct Cli {
@@ -36,29 +31,32 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub testconf: bool,
 
-    /// v13.1: Disable incremental scan cache (force full rescan)
+    /// Disable incremental scan cache (force full rescan)
     #[arg(long, global = true)]
     pub no_cache: bool,
 
-    /// v13.2: Colorblind mode — use shapes (✓⚠⛔) instead of colors
+    /// Colorblind mode — use shapes (✓⚠⛔) instead of colors
     #[arg(long, global = true)]
     pub colorblind: bool,
 
-    /// v13.3: Quiet mode — suppress progress output (for cron/scripts)
+    /// Quiet mode — suppress progress output (for cron/scripts)
+    ///
     /// Only shows final results. Use with --json for fully scriptable output.
     #[arg(long, short = 'q', global = true)]
     pub quiet: bool,
 
-    /// v14.1: Show scan cache statistics (size, entries, last-updated) and exit
+    /// Show scan cache statistics (size, entries, last-updated) and exit
     #[arg(long, global = true)]
     pub cache_stats: bool,
 
-    /// v14.3: Config preset — "dev" (default), "server" (conservative), "minimal" (safe-only)
+    /// Config preset — "dev" (default), "server" (conservative), "minimal" (safe-only)
+    ///
     /// Overrides base config values with preset defaults.
     #[arg(long, global = true)]
     pub preset: Option<String>,
 
-    /// v14.3: Export Prometheus metrics to stdout and exit
+    /// Export Prometheus metrics to stdout and exit
+    ///
     /// Use with node_exporter textfile collector for monitoring.
     #[arg(long, global = true)]
     pub metrics: bool,
@@ -66,8 +64,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 #[command(
-    after_help = "💡 Quick start: zacxiom scan → zacxiom plan → zacxiom clean\n   All destructive commands are recoverable with zacxiom undo\n   \
-                  v13: Use --exclude to protect specific paths/patterns"
+    after_help = "💡 Quick start: zacxiom scan → zacxiom plan → zacxiom clean\n   All destructive commands are recoverable with zacxiom undo"
 )]
 pub enum Command {
     /// Scan filesystem for cache files and classify them
@@ -89,11 +86,12 @@ pub enum Command {
         #[arg(long)]
         json: bool,
         /// Exclude paths/patterns from scan (e.g. --exclude "~/Downloads" --exclude "*.iso")
+        ///
         /// Can be specified multiple times. Also read from config.toml [scan].exclude.
         #[arg(long)]
         exclude: Vec<String>,
 
-        /// v13.2: Show smart suggestions (stale directories, cleanup hints)
+        /// Show smart suggestions (stale directories, cleanup hints)
         #[arg(long)]
         suggest: bool,
     },
@@ -111,12 +109,12 @@ pub enum Command {
 
     /// Execute safe clean — removes files with trash-based recovery
     ///
-    /// Safety levels (v13: confirmation required for smart/force unless --yes):
+    /// Safety levels (confirmation required for smart/force unless --yes):
     ///   clean          — SAFE files only (default dry-run on first use)
     ///   clean --smart  — SAFE + LOW_RISK (requires confirmation or --yes)
     ///   clean --force  — SAFE + LOW + MODERATE (requires typing "DELETE" or --yes)
     ///
-    /// v13: --force NO LONGER allows HighRisk files — those need manual `rm`.
+    /// --force never allows HighRisk files — those need manual `rm`.
     ///
     /// Examples:
     ///   zacxiom clean                    # conservative (dry-run on first use)
@@ -152,17 +150,19 @@ pub enum Command {
         /// Exclude paths/patterns from cleaning (e.g. --exclude "~/Downloads" --exclude "*.iso")
         #[arg(long)]
         exclude: Vec<String>,
-        /// v13: Only clean files matching these patterns (whitelist mode).
+        /// Only clean files matching these patterns (whitelist mode)
+        ///
         /// Example: --include "target/*" --include "node_modules/*"
         #[arg(long)]
         include: Vec<String>,
-        /// v13: Stop on first error instead of continuing.
+        /// Stop on first error instead of continuing
         #[arg(long)]
         fail_fast: bool,
-        /// v13.2: Show diff — what changed since last scan (use with --dry-run)
+        /// Show diff — what changed since last scan (use with --dry-run)
         #[arg(long)]
         diff: bool,
         /// Auto-confirm all prompts (skip dry-run, skip confirmation)
+        ///
         /// Required for non-interactive use (CI/scripts)
         #[arg(long)]
         yes: bool,
@@ -295,7 +295,7 @@ pub enum Command {
         action: Option<SnapshotAction>,
     },
 
-    /// Manage user configuration (v13)
+    /// Manage user configuration
     ///
     /// Zacxiom reads ~/.config/zacxiom/config.toml on startup.
     /// If the file has syntax errors or invalid values, zacxiom refuses to run.
@@ -310,7 +310,7 @@ pub enum Command {
         action: ConfigAction,
     },
 
-    /// Generate shell completions (v13.1)
+    /// Generate shell completions
     ///
     /// Print completion script for the given shell to stdout.
     /// Install with: zacxiom completions bash > /etc/bash_completion.d/zacxiom
@@ -321,14 +321,14 @@ pub enum Command {
         shell: clap_complete::Shell,
     },
 
-    /// Generate man page (v14.1)
+    /// Generate man page
     ///
     /// Print groff-formatted man page to stdout.
     /// Install with: zacxiom man > /usr/local/share/man/man1/zacxiom.1
     ///               mandb && man zacxiom
     Man,
 
-    /// Find duplicate files by content hash (v14.2)
+    /// Find duplicate files by content hash
     ///
     /// Scans for duplicate files using size → SHA-256 comparison.
     /// Read-only — never deletes. Use with `zacxiom clean` to act on results.
@@ -347,7 +347,7 @@ pub enum Command {
         json: bool,
     },
 
-    /// Visualize disk usage as ASCII treemap (v14.2)
+    /// Visualize disk usage as ASCII treemap
     ///
     /// Shows a tree of directories sorted by size — like dust/ncdu but read-only.
     Viz {
@@ -389,7 +389,7 @@ pub enum SnapshotAction {
         #[arg(long)]
         confirm: Option<String>,
     },
-    /// v13.2: Verify snapshot integrity — detect corrupted snapshots
+    /// Verify snapshot integrity — detect corrupted snapshots
     Verify,
 }
 
