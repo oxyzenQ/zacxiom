@@ -399,7 +399,12 @@ pub fn load() -> Result<Config, String> {
     if !path.exists() {
         return Ok(Config::default());
     }
-    let contents = fs::read_to_string(&path)
+    // v14.4: Pathguard — strict allowlist enforcement. Prevents arbitrary file
+    // reads of dangerous paths (e.g. /etc/shadow, ~/.ssh/) even if the
+    // hardcoded path is somehow overridden via XDG env vars or symlinks.
+    let canonical = crate::pathguard::validate_state_read(&path)
+        .map_err(|e| format!("pathguard rejected config path: {e}"))?;
+    let contents = fs::read_to_string(&canonical)
         .map_err(|e| format!("Cannot read config file {}: {e}", path.display()))?;
     parse_and_validate(&contents)
 }
@@ -633,13 +638,24 @@ pub fn validate_for_testconf() -> TestconfReport {
         };
     }
 
-    let contents = match fs::read_to_string(&path) {
-        Ok(c) => c,
+    let contents = match crate::pathguard::validate_state_read(&path) {
+        Ok(canonical) => match fs::read_to_string(&canonical) {
+            Ok(c) => c,
+            Err(e) => {
+                return TestconfReport {
+                    file_exists: true,
+                    file_path: path,
+                    errors: vec![format!("Cannot read file: {e}")],
+                    warnings: Vec::new(),
+                    config: Config::default(),
+                };
+            }
+        },
         Err(e) => {
             return TestconfReport {
                 file_exists: true,
                 file_path: path,
-                errors: vec![format!("Cannot read file: {e}")],
+                errors: vec![format!("pathguard rejected config path: {e}")],
                 warnings: Vec::new(),
                 config: Config::default(),
             };
@@ -775,11 +791,14 @@ pub fn write_default_config() -> Result<PathBuf, String> {
             path.display()
         ));
     }
+    // v14.4: Pathguard — strict allowlist enforcement for writes too.
+    let canonical = crate::pathguard::validate_state_write(&path)
+        .map_err(|e| format!("pathguard rejected config write path: {e}"))?;
     let dir = config_dir();
     fs::create_dir_all(&dir)
         .map_err(|e| format!("Cannot create config dir {}: {e}", dir.display()))?;
     let contents = default_config_toml();
-    fs::write(&path, contents)
+    fs::write(&canonical, contents)
         .map_err(|e| format!("Cannot write config {}: {e}", path.display()))?;
     Ok(path)
 }

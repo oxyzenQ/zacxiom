@@ -36,6 +36,7 @@ mod inspect;
 mod memory;
 mod ownership;
 mod parallel;
+mod pathguard;
 mod pipeline;
 mod planner;
 mod policy;
