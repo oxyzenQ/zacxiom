@@ -154,6 +154,17 @@ fn main() {
         let cache_file = scan_cache::cache_dir().join("scan_cache.json");
         let file_size = fs::metadata(&cache_file).map(|m| m.len()).unwrap_or(0);
         println!("━━━ SCAN CACHE STATISTICS ━━━");
+        // v14.4.1: Show effective user so it's clear which cache is being read.
+        // Running with sudo reads root's cache; without sudo reads the user's.
+        let effective_uid = unsafe { libc::geteuid() };
+        let sudo_user = std::env::var("SUDO_USER").ok();
+        if effective_uid == 0 {
+            let who = sudo_user
+                .as_deref()
+                .map(|u| format!("sudo from {u}"))
+                .unwrap_or_else(|| "direct root".to_string());
+            println!("  User:       root ({who})");
+        }
         println!("  File:       {}", cache_file.display());
         println!(
             "  Size:       {} ({} bytes)",

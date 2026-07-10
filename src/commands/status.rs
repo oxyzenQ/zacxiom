@@ -24,9 +24,25 @@ pub fn run_status(golden: bool) {
         format!("v{}", env!("CARGO_PKG_VERSION"))
     };
 
+    // v14.4.1: Warn when running as root — data is scoped to root's HOME,
+    // not the calling user's HOME. Prevents confusion like "status shows 0
+    // snapshots" when snapshots exist under the unprivileged user.
+    let running_as_root = unsafe { libc::geteuid() == 0 };
+    let sudo_user = std::env::var("SUDO_USER").ok();
+
     println!("────────────");
     println!("  ZACXIOM {} STATUS", version);
     println!("────────────");
+    if !golden && running_as_root {
+        let scope_msg = if let Some(ref user) = sudo_user {
+            format!("  Scope     : root (invoked via sudo by {user})")
+        } else {
+            "  Scope     : root".to_string()
+        };
+        println!("{scope_msg}");
+        println!("  Data dir  : {}", snapshot::snapshot_dir().display());
+        println!("  Note      : This shows root's data. Run without sudo for your user's data.");
+    }
     println!("  Health    : {:?}", health);
     if golden {
         println!("  History   : <NUM> records");

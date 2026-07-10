@@ -217,29 +217,44 @@ pub fn run_snapshot_purge(confirmed: &str) {
         println!("No snapshots to purge.");
         return;
     }
+    let total = all.len();
 
-    // Delete metadata files
-    let dir = snapshot::snapshot_dir();
+    // Delete metadata files from BOTH XDG and legacy directories.
+    // list_all() aggregates from both dirs, so purge must delete from both.
     let mut deleted = 0;
+    let mut failed = Vec::new();
     for snap_id in &all {
-        let path = dir.join(snap_id);
-        if std::fs::remove_file(&path).is_ok() {
-            deleted += 1;
+        match snapshot::delete_snapshot(snap_id) {
+            Ok(()) => deleted += 1,
+            Err(e) => failed.push(format!("{snap_id}: {e}")),
         }
     }
 
-    // Also clean up trash directory
-    let trash = snapshot::trash_dir();
-    if trash.exists() {
-        let _ = std::fs::remove_dir_all(&trash);
-        let _ = std::fs::create_dir_all(&trash);
+    // Also clean up trash directories (both XDG and legacy)
+    for trash_path in &[snapshot::trash_dir(), legacy_trash_dir()] {
+        if trash_path.exists() {
+            let _ = std::fs::remove_dir_all(trash_path);
+        }
     }
 
-    println!("Purged ALL {deleted} snapshot(s).");
+    if failed.is_empty() {
+        println!("Purged ALL {deleted} snapshot(s).");
+    } else {
+        println!("Purged {deleted}/{total} snapshot(s).");
+        for f in &failed {
+            eprintln!("  Failed: {f}");
+        }
+    }
     println!("Trash directory cleared.");
 }
 
 // ── Helpers ────────────────────────────────────────────────────
+
+/// Legacy trash directory (pre-v13, ~/.cache/zacxiom/trash).
+fn legacy_trash_dir() -> std::path::PathBuf {
+    let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
+    std::path::PathBuf::from(home).join(".cache/zacxiom/trash")
+}
 
 fn format_snap_id(id: &str) -> String {
     if id.len() > 18 {
