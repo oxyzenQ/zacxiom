@@ -80,19 +80,11 @@ pub fn run_undo(id: Option<String>, list_only: bool) {
                     }
                 }
                 Ok(n) => {
-                    // v13.2: Learning risk model — flag restored paths so zacxiom
-                    // learns that user wanted these files back. Future scans will
-                    // raise risk for these paths, making them less likely to be
-                    // auto-cleaned again.
-                    let mut memory = crate::memory::ContextMemory::load();
-                    for entry in &snap.entries {
-                        if !entry.skipped {
-                            memory.flag_path(
-                                &entry.path,
-                                "user restored via undo — avoid auto-cleaning",
-                            );
-                        }
-                    }
+                    // v13.2: Removed flag_path() call — undo is a safety mechanism,
+                    // not a "never clean this path again" signal. Users who undo
+                    // then re-clean should not find their files reclassified to
+                    // a higher risk tier (Safe → LowRisk) due to memory flags.
+                    // The domain+age+path signals are sufficient for risk scoring.
                     // v13.3: Audit log
                     crate::audit::AuditEntry::undo(&snap_id, n).log();
                     if skipped > 0 {
@@ -100,9 +92,6 @@ pub fn run_undo(id: Option<String>, list_only: bool) {
                     } else {
                         println!("Restored {n} files.");
                     }
-                    println!(
-                        "  💡 Risk model updated — these paths will be treated more cautiously."
-                    );
                 }
                 Err(e) => {
                     eprintln!("Restore error: {e}");

@@ -256,7 +256,7 @@ pub fn run_clean(
     }
     println!("  Snapshot:  {}", snap.id);
     println!("  Undo:      zacxiom undo --id {}", snap.id);
-    println!("  Stored in: ~/.cache/zacxiom/snapshots/");
+    println!("  Stored in: {}", snapshot::snapshot_dir().display());
 
     // Show top-removed categories for user confidence
     let removed_paths: std::collections::HashSet<&str> = report
