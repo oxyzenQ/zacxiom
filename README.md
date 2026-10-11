@@ -16,6 +16,67 @@
   <a href="https://ko-fi.com/rezky"><img src="https://img.shields.io/badge/Ko--fi-support-7C3AED?style=flat-square&logo=kofi&logoColor=white&labelColor=111827" alt="Support"></a>
 </p>
 
+> [!WARNING]
+> **ARCHIVED — This project is no longer actively developed.**
+>
+> This repository is preserved as a **read-only artifact**. All code, documentation, and release history remain available for cloning and study, but there will be **no further development, no issue triage, and no security updates**.
+>
+> **Important:** Unlike projects archived for never reaching their goal, zacxiom was archived **complete and stable**. All shipped features work. Development ended as part of a deliberate portfolio triage — not because of defects, security issues, or unfinished work.
+
+---
+
+## Why This Project Was Archived
+
+Documented honestly, for anyone (including future me) wondering what happened:
+
+1. **The author stopped using it.**
+   The decisive data point: for the last several months, the author reached for plain `rm -rf` instead. A safety-first cleaner whose own author will not pay its workflow tax (`scan → plan → simulate → confirm`) on a personal desktop has a product-thesis problem, not a code defect. When the tool built to replace `rm -rf` loses to `rm -rf`, that is the most honest metric this repository can document — safety value that loses to muscle-memory friction does not get adopted, even by its author.
+
+2. **The product was complete anyway.**
+   v13 delivered the core product: config-driven excludes, strict validation, first-run dry-run, protected extensions, undo snapshots. v14.x added cross-Unix builds, static musl binaries, dedup, visualization, and metrics. Everything shipped works.
+
+3. **Disk cleaning is episodic by nature.**
+   Users clean when the disk fills — every few months. No retention, no recurring engagement, no community formation. Episodic tools are *done* when done; continuous development would have been feature creep (and v14.2/v14.4.1 drifted exactly there — dedup, treemaps, and Prometheus metrics for a home-directory cleaner).
+
+4. **Distribution never happened.**
+   No AUR package, no crates.io publication — manual tarball installs only. Competitors are one package-manager command away. An unpackaged CLI tool effectively does not exist in the market it competes in.
+
+5. **The space is crowded and mature.**
+   BleachBit, ncdu, dust, rmlint, fdupes, czkawka — packaged, known, entrenched. zacxiom's trash-based-undo differentiator is real, but realizing it requires distribution and marketing effort that was deliberately not allocated.
+
+6. **Portfolio triage.**
+   Time and energy are finite and better allocated elsewhere. zacxiom is archived as a **completed, stable work — with dignity**, not as a failure. Its engineering lessons (TOCTOU hardening, atomic cross-fs copies, strict config validation, adaptive threading) carry forward to whatever comes next.
+
+---
+
+## Status
+
+**ARCHIVED at v14.4.1 — Enterprise Readiness.**
+
+Everything shipped remains fully functional:
+
+- Full safety loop: `scan → explain → plan → simulate → clean → undo`
+- Trash-based recovery with snapshot IDs and checksum verification
+- Config presets (`dev | server | minimal`), Prometheus metrics, audit log rotation
+- `dedup` (duplicate detection) and `viz` (ASCII treemap)
+- Strict TOML config with `--testconf` validation
+- glibc + static musl binaries, zero dependencies
+
+If this code is useful to you — fork it. GPL-3.0-only, forks are welcome.
+
+---
+
+## Conditions for Possible Revival
+
+This project may be unarchived only if, at minimum:
+
+- [ ] The friction problem is solved first — a one-command flow that beats `rm -rf` muscle memory (no new features until this is true)
+- [ ] A distribution channel (AUR and/or crates.io) is established and maintained
+- [ ] Personal usage is real — measurably, in shell history
+- [ ] Development time is genuinely allocated — not leftover time
+
+Until all four are true, this stays an artifact.
+
 ---
 
 ## Philosophy
@@ -28,6 +89,8 @@ zacxiom follows four principles:
 4. **Observe Before Acting** — `Observe → Understand → Decide → Act`. Never skip directly to deleting.
 
 ## How zacxiom Compares
+
+*Comparison reflects zacxiom v14 at the time of archiving.*
 
 zacxiom is the only filesystem cleaner that combines cache-aware classification, trash-based recovery, explainability, and compliance-grade audit logging — all in a static musl binary with zero dependencies.
 
@@ -80,6 +143,8 @@ No single competitor offers this combination:
 ---
 
 ## Quick Start
+
+Build and install instructions are preserved for anyone cloning this archive. Nothing here is maintained.
 
 ```bash
 # Install
